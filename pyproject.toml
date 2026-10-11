@@ -3,7 +3,7 @@ name = "harness-state"
 version = "0.1.0"
 description = "Cliente oficial de State Tracking para a Plataforma de Harness SDD Federada (eduardosan)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [
     { name = "Eduardo F. Santos", email = "eduardo@for.mat.br" }
 ]
