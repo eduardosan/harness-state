@@ -111,3 +111,58 @@ def test_click_cli_help() -> None:
     assert "update" in result.output
     assert "plan" in result.output
     assert "resume" in result.output
+
+
+def test_click_plan_help_shows_manifest_option() -> None:
+    """Business Rule: O comando plan deve documentar a opção --manifest na ajuda interativa."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["plan", "--help"])
+    assert result.exit_code == 0
+    assert "--manifest" in result.output
+
+
+@pytest.mark.asyncio
+async def test_run_plan_with_manifest_topological_waves(tmp_path: Path) -> None:
+    """Business Rule: O comando plan deve calcular as ondas de execução topológicas com base no manifesto."""
+    manifest_content = (
+        "repositories:\n"
+        "  - name: paralax-evo-crm\n"
+        "    repo: paralax-ia/paralax-evo-crm\n"
+        "    depends_on: []\n"
+        "  - name: customer-support-vehicles\n"
+        "    repo: paralax-ia/customer-support-vehicles\n"
+        "    depends_on:\n"
+        "      - paralax-evo-crm\n"
+    )
+    manifest_file = tmp_path / "manifest.yaml"
+    manifest_file.write_text(manifest_content, encoding="utf-8")
+
+    spec_content = (
+        "# Feature 60: Topologically Ordered Flow\n\n"
+        "### Checklist de Execução\n"
+        "- [ ] **Agente Veículos** (`paralax-ia/customer-support-vehicles`): Atualiza dependência.\n"
+        "- [ ] **SDK Core** (`paralax-ia/paralax-evo-crm`): Implementa novo recurso.\n"
+    )
+    spec_file = tmp_path / "SPEC-060.md"
+    spec_file.write_text(spec_content, encoding="utf-8")
+
+    store = InMemoryStateStore()
+    await run_plan(
+        spec_file=str(spec_file),
+        manifest_file=str(manifest_file),
+        spec_id=None,
+        title=None,
+        author="planner-agent",
+        store=store,
+    )
+
+    saved = await store.get_spec("SPEC-060")
+    assert saved is not None
+    assert len(saved.tasks) == 2
+
+    crm_task = next(t for t in saved.tasks.values() if "paralax-evo-crm" in t.repo)
+    vehicles_task = next(t for t in saved.tasks.values() if "customer-support-vehicles" in t.repo)
+
+    assert crm_task.wave == 1
+    assert vehicles_task.wave == 2
+    assert crm_task.id in vehicles_task.depends_on
