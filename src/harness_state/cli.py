@@ -312,6 +312,9 @@ async def run_plan(
             for tid, task in parsed_subtasks.items():
                 if tid not in existing.tasks:
                     existing.tasks[tid] = task
+                else:
+                    existing.tasks[tid].wave = task.wave
+                    existing.tasks[tid].depends_on = task.depends_on
             await active_store.save_spec(existing)
             console.print(
                 f"[bold green]✓[/bold green] Plano para [bold cyan]{target_spec_id}[/bold cyan] "
