@@ -30,3 +30,6 @@ dev = [
     "isort>=5.13.0",
     "pyright>=1.1.350",
 ]
+
+[tool.isort]
+profile = "black"
