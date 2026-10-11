@@ -1,10 +1,11 @@
 """Interface de linha de comando para o harness-state."""
 
 import asyncio
-from pathlib import Path
 import re
+from pathlib import Path
 
 import click
+import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -14,11 +15,98 @@ from harness_state.models import SpecRun, SubTask, TaskState
 console = Console()
 
 
-def parse_spec_markdown(file_path: Path) -> tuple[str, str, dict[str, SubTask]]:
+def load_manifest_dependencies(manifest_path: Path | None = None) -> dict[str, list[str]]:
+    """Carrega o mapa de dependências a partir do manifest.yaml.
+
+    Args:
+        manifest_path: Caminho opcional para o arquivo manifest.yaml.
+
+    Returns:
+        Dicionário mapeando nome ou repo do projeto para sua lista de dependências.
+    """
+    if manifest_path is None or not manifest_path.exists():
+        return {}
+
+    try:
+        content = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        repos_data = content.get("repositories", [])
+        dep_map: dict[str, list[str]] = {}
+        for entry in repos_data:
+            name = entry.get("name", "")
+            repo = entry.get("repo", "")
+            deps = entry.get("depends_on", [])
+            if name:
+                dep_map[name] = deps
+            if repo:
+                dep_repo = deps
+                dep_map[repo] = dep_repo
+        return dep_map
+    except (yaml.YAMLError, OSError):
+        return {}
+
+
+def calculate_task_wave(tid: str, subtasks: dict[str, SubTask], visited: set[str]) -> int:
+    """Calcula a onda de uma subtarefa recursivamente com proteção de ciclo.
+
+    Args:
+        tid: Identificador da subtarefa.
+        subtasks: Dicionário completo de subtarefas.
+        visited: Conjunto de tarefas já visitadas na cadeia para evitar ciclos.
+
+    Returns:
+        Número inteiro representando a onda de execução (1, 2, ...).
+    """
+    if tid in visited:
+        return 1
+    visited.add(tid)
+    task = subtasks.get(tid)
+    if task is None or not task.depends_on:
+        return 1
+    return 1 + max(
+        (calculate_task_wave(dep_tid, subtasks, visited) for dep_tid in task.depends_on if dep_tid in subtasks),
+        default=0,
+    )
+
+
+def calculate_waves(subtasks: dict[str, SubTask], dep_map: dict[str, list[str]]) -> dict[str, SubTask]:
+    """Calcula a onda (wave) e dependências de execução para cada subtarefa.
+
+    Args:
+        subtasks: Dicionário de subtarefas extraídas.
+        dep_map: Grafo de dependências entre repositórios.
+
+    Returns:
+        Dicionário de subtarefas com ondas e dependências preenchidas.
+    """
+    repo_to_task_id: dict[str, str] = {}
+    for tid, task in subtasks.items():
+        repo_to_task_id[task.repo] = tid
+        repo_to_task_id[task.repo.split("/")[-1]] = tid
+
+    for task in subtasks.values():
+        direct_deps = dep_map.get(task.repo, []) or dep_map.get(task.repo.split("/")[-1], [])
+        task.depends_on = [
+            repo_to_task_id[dep]
+            for dep in direct_deps
+            if dep in repo_to_task_id and repo_to_task_id[dep] != task.id
+        ]
+
+    for tid, task in subtasks.items():
+        task.wave = calculate_task_wave(tid, subtasks, set())
+
+    # Ordena as subtarefas pela onda crescente
+    ordered = dict(sorted(subtasks.items(), key=lambda item: (item[1].wave, item[0])))
+    return ordered
+
+
+def parse_spec_markdown(
+    file_path: Path, manifest_path: Path | None = None
+) -> tuple[str, str, dict[str, SubTask]]:
     """Extrai identificador, título e subtarefas de uma especificação em markdown.
 
     Args:
         file_path: Caminho para o arquivo markdown da especificação.
+        manifest_path: Caminho opcional para o manifesto com dependências.
 
     Returns:
         Tupla contendo (spec_id, title, dict_subtasks).
@@ -55,7 +143,12 @@ def parse_spec_markdown(file_path: Path) -> tuple[str, str, dict[str, SubTask]]:
             )
             task_index += 1
 
+    dep_map = load_manifest_dependencies(manifest_path)
+    if dep_map:
+        subtasks = calculate_waves(subtasks, dep_map)
+
     return spec_id, title, subtasks
+
 
 
 async def run_init(
@@ -101,6 +194,7 @@ async def run_status(
 
         table = Table(title=f"Spec: {spec.spec_id} - {spec.title} (Status: {spec.status.value})")
         table.add_column("Tarefa ID", style="cyan")
+        table.add_column("Onda", style="bold green", justify="center")
         table.add_column("Repositório", style="magenta")
         table.add_column("Branch", style="green")
         table.add_column("Status", style="yellow")
@@ -110,6 +204,7 @@ async def run_status(
         for task in spec:
             table.add_row(
                 task.id,
+                f"Onda {task.wave}",
                 task.repo,
                 task.branch,
                 task.status.value,
@@ -164,6 +259,7 @@ async def run_plan(
     spec_id: str | None = None,
     title: str | None = None,
     author: str = "local-dev",
+    manifest_file: str | None = None,
     store: StateStoreProtocol | None = None,
 ) -> None:
     """Planeja ou registra uma especificação a partir de parâmetros ou arquivo markdown.
@@ -173,6 +269,7 @@ async def run_plan(
         spec_id: Identificador opcional da especificação.
         title: Título opcional da especificação.
         author: Autor da especificação.
+        manifest_file: Caminho opcional para o manifest.yaml com grafo de dependências.
         store: Instância opcional de persistência.
     """
     target_spec_id = spec_id
@@ -184,9 +281,24 @@ async def run_plan(
         if not file_path.exists():
             console.print(f"[bold red]Erro:[/bold red] Arquivo {spec_file} não encontrado.")
             return
-        parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(file_path)
+
+        # Auto-descobre manifest.yaml se não fornecido
+        target_manifest = Path(manifest_file) if manifest_file else None
+        if target_manifest is None:
+            # Procura no diretório pai ou no hub paralax-spec-hub
+            candidate_same_dir = file_path.parent / "manifest.yaml"
+            candidate_parent = file_path.parent.parent / "manifest.yaml"
+            if candidate_same_dir.exists():
+                target_manifest = candidate_same_dir
+            elif candidate_parent.exists():
+                target_manifest = candidate_parent
+
+        parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(
+            file_path, manifest_path=target_manifest
+        )
         target_spec_id = target_spec_id or parsed_id
         target_title = title or parsed_title
+
 
     if not target_spec_id:
         console.print("[bold red]Erro:[/bold red] Identificador da spec não informado.")
@@ -291,12 +403,27 @@ def update(spec_id: str, task_id: str, new_status: str, worker: str, pr: int | N
 
 @main.command()
 @click.option("--spec", "spec_file", type=click.Path(), default=None, help="Caminho do arquivo de especificação")
+@click.option("--manifest", "manifest_file", type=click.Path(), default=None, help="Caminho do arquivo manifest.yaml")
 @click.option("--spec-id", default=None, help="Identificador único da spec")
 @click.option("--title", default=None, help="Título descritivo da funcionalidade")
 @click.option("--author", default="local-dev", help="Autor da especificação")
-def plan(spec_file: str | None, spec_id: str | None, title: str | None, author: str) -> None:
+def plan(
+    spec_file: str | None,
+    manifest_file: str | None,
+    spec_id: str | None,
+    title: str | None,
+    author: str,
+) -> None:
     """Grava ou atualiza uma nova spec e suas sub-tarefas no barramento central."""
-    asyncio.run(run_plan(spec_file=spec_file, spec_id=spec_id, title=title, author=author))
+    asyncio.run(
+        run_plan(
+            spec_file=spec_file,
+            manifest_file=manifest_file,
+            spec_id=spec_id,
+            title=title,
+            author=author,
+        )
+    )
 
 
 @main.command()

@@ -37,7 +37,10 @@ class SubTask(BaseModel):
     pr_number: int | None = None
     sub_spec_path: str | None = None
     last_worker: str | None = None
+    wave: int = 1
+    depends_on: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
 
 
 class SpecRun(BaseModel):
