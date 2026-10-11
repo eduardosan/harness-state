@@ -2,20 +2,19 @@
 
 import json
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import redis.asyncio as aioredis
 from harness_state.models import SpecRun, SubTask, TaskState
 
 
 class Settings(BaseSettings):
     """Configurações de conexão do Redis."""
+    model_config = SettingsConfigDict(env_prefix="HARNESS_")
+
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: Optional[str] = None
-
-    class Config:
-        env_prefix = "HARNESS_"
 
 
 class StateStore:

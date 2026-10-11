@@ -12,13 +12,37 @@ uv tool install git+https://github.com/eduardosan/harness-state.git
 
 ## Conexão ao Redis
 
-Como o Redis opera na rede privada interna do Proxmox (`192.168.20.5:6379`), execute o túnel SSH na porta 8 antes de usar o CLI localmente:
+Como o Redis opera na rede privada interna do Proxmox (`192.168.20.5:6379`), você pode iniciar o túnel SSH em background diretamente pelo Makefile:
 
 ```bash
-ssh -p 8 -N -L 6379:192.168.20.5:6379 eduardo@pve2.for.mat.br
+# Iniciar o túnel SSH em background
+make tunnel
+
+# Verificar se o túnel está ativo
+make tunnel-check
+
+# Encerrar o túnel
+make tunnel-stop
+```
+
+O comando executado por baixo dos panos é:
+```bash
+ssh -p 8 -N -f -L 6379:192.168.20.5:6379 eduardo@pve2.for.mat.br
 ```
 
 Por padrão, o `harness-state` conecta em `localhost:6379` sem senha.
+
+## Instalação da CLI
+
+Você pode instalar a CLI globalmente ou no ambiente virtual do projeto:
+
+```bash
+# Instalação global via uv tool (acessível no PATH de qualquer terminal)
+make install-global
+
+# Instalação local no venv (.venv)
+make install-local
+```
 
 ## Comandos Principais
 
