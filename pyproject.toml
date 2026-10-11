@@ -1,0 +1,32 @@
+[project]
+name = "harness-state"
+version = "0.1.0"
+description = "Cliente oficial de State Tracking para a Plataforma de Harness SDD Federada (eduardosan)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Eduardo F. Santos", email = "eduardo@for.mat.br" }
+]
+dependencies = [
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "redis[hiredis]>=5.0.0",
+    "click>=8.1.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+harness-state = "harness_state.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "isort>=5.13.0",
+    "pyright>=1.1.350",
+]
