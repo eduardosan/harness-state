@@ -2,29 +2,32 @@
 
 import asyncio
 from pathlib import Path
+import re
 
 import click
 from rich.console import Console
 from rich.table import Table
 
 from harness_state.client import StateStore, StateStoreProtocol
-from harness_state.models import SpecRun, TaskState
+from harness_state.models import SpecRun, SubTask, TaskState
 
 console = Console()
 
 
-def parse_spec_markdown(file_path: Path) -> tuple[str, str]:
-    """Extrai o identificador e o título de uma especificação em markdown.
+def parse_spec_markdown(file_path: Path) -> tuple[str, str, dict[str, SubTask]]:
+    """Extrai identificador, título e subtarefas de uma especificação em markdown.
 
     Args:
         file_path: Caminho para o arquivo markdown da especificação.
 
     Returns:
-        Tupla contendo (spec_id, title).
+        Tupla contendo (spec_id, title, dict_subtasks).
     """
     spec_id = file_path.stem
     content = file_path.read_text(encoding="utf-8")
     title = spec_id
+    subtasks: dict[str, SubTask] = {}
+
     for line in content.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
@@ -32,7 +35,27 @@ def parse_spec_markdown(file_path: Path) -> tuple[str, str]:
             if candidate:
                 title = candidate
                 break
-    return spec_id, title
+
+    task_pattern = re.compile(
+        r"-\s*\[([ xX])\]\s*.*?`([^`]+)`.*?"
+    )
+    task_index = 1
+    for line in content.splitlines():
+        match = task_pattern.search(line)
+        if match:
+            is_checked = match.group(1).lower() == "x"
+            repo = match.group(2).strip()
+            task_id = f"task-{task_index}"
+            branch_name = f"agent/{spec_id.lower()}-{repo.split('/')[-1]}"
+            subtasks[task_id] = SubTask(
+                id=task_id,
+                repo=repo,
+                branch=branch_name,
+                status=TaskState.APPROVED if is_checked else TaskState.PENDING,
+            )
+            task_index += 1
+
+    return spec_id, title, subtasks
 
 
 async def run_init(
@@ -155,12 +178,13 @@ async def run_plan(
     target_spec_id = spec_id
     target_title = title or "Nova Especificação"
 
+    parsed_subtasks: dict[str, SubTask] = {}
     if spec_file is not None:
         file_path = Path(spec_file)
         if not file_path.exists():
             console.print(f"[bold red]Erro:[/bold red] Arquivo {spec_file} não encontrado.")
             return
-        parsed_id, parsed_title = parse_spec_markdown(file_path)
+        parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(file_path)
         target_spec_id = target_spec_id or parsed_id
         target_title = title or parsed_title
 
@@ -173,18 +197,26 @@ async def run_plan(
         existing = await active_store.get_spec(target_spec_id)
         if existing is not None:
             existing.title = target_title
+            for tid, task in parsed_subtasks.items():
+                if tid not in existing.tasks:
+                    existing.tasks[tid] = task
             await active_store.save_spec(existing)
             console.print(
                 f"[bold green]✓[/bold green] Plano para [bold cyan]{target_spec_id}[/bold cyan] "
-                "atualizado com sucesso."
+                f"atualizado com sucesso ({len(existing.tasks)} subtarefas)."
             )
             return
 
-        new_spec = SpecRun(spec_id=target_spec_id, title=target_title, author=author)
+        new_spec = SpecRun(
+            spec_id=target_spec_id,
+            title=target_title,
+            author=author,
+            tasks=parsed_subtasks,
+        )
         await active_store.save_spec(new_spec)
         console.print(
             f"[bold green]✓[/bold green] Plano para [bold cyan]{target_spec_id}[/bold cyan] "
-            "registrado com sucesso."
+            f"registrado com sucesso ({len(parsed_subtasks)} subtarefas)."
         )
 
 

@@ -64,9 +64,15 @@ async def test_run_update_changes_task_status() -> None:
 
 @pytest.mark.asyncio
 async def test_run_plan_from_file(tmp_path: Path) -> None:
-    """Business Rule: O comando plan deve conseguir carregar dados a partir de um arquivo de spec."""
+    """Business Rule: O comando plan deve conseguir carregar dados e subtarefas a partir de um arquivo de spec."""
+    spec_content = (
+        "# Feature 40: Implement Distributed Flow\n\n"
+        "### Checklist de Execução\n"
+        "- [ ] **Implementação do Core** (`paralax-ia/paralax-evo-crm`): Adiciona o client.\n"
+        "- [x] **Agente de Teste** (`paralax-ia/customer-support-vehicles`): Valida rota.\n"
+    )
     spec_file = tmp_path / "SPEC-040.md"
-    spec_file.write_text("# Feature 40: Implement Distributed Flow\n\nDetalhes da especificação...", encoding="utf-8")
+    spec_file.write_text(spec_content, encoding="utf-8")
 
     store = InMemoryStateStore()
     await run_plan(spec_file=str(spec_file), spec_id=None, title=None, author="planner-agent", store=store)
@@ -74,6 +80,11 @@ async def test_run_plan_from_file(tmp_path: Path) -> None:
     saved = await store.get_spec("SPEC-040")
     assert saved is not None
     assert "Feature 40" in saved.title
+    assert len(saved.tasks) == 2
+    assert saved.tasks["task-1"].repo == "paralax-ia/paralax-evo-crm"
+    assert saved.tasks["task-1"].status == TaskState.PENDING
+    assert saved.tasks["task-2"].repo == "paralax-ia/customer-support-vehicles"
+    assert saved.tasks["task-2"].status == TaskState.APPROVED
 
 
 @pytest.mark.asyncio
