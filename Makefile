@@ -1,12 +1,21 @@
 # Makefile para harness-state
+#
+# Parâmetros de rede são genéricos; para o seu ambiente, defina-os em um
+# arquivo `local.mk` (ignorado pelo git) com atribuições `=`, ex.:
+#   REDIS_HOST = 10.0.0.5
+#   SSH_USER   = seu-usuario
+#   SSH_HOST   = seu-jump-host
+#   SSH_PORT   = 22
 
 .PHONY: tunnel tunnel-check tunnel-stop install install-global install-local test lint sync help
 
-REDIS_HOST ?= 192.168.20.5
+REDIS_HOST ?= 127.0.0.1
 REDIS_PORT ?= 6379
-SSH_USER ?= eduardo
-SSH_HOST ?= pve2.for.mat.br
-SSH_PORT ?= 8
+SSH_USER ?=
+SSH_HOST ?=
+SSH_PORT ?= 22
+
+-include local.mk
 
 help:
 	@echo "Comandos disponíveis:"
@@ -19,8 +28,12 @@ help:
 	@echo "  make lint           - Executa checagem de estilo com ruff e isort"
 	@echo "  make sync           - Sincroniza as dependências do projeto com uv"
 
-# Sobe o túnel SSH em background na porta 8
+# Sobe o túnel SSH em background (requer SSH_HOST configurado em local.mk)
 tunnel:
+	@if [ -z "$(SSH_HOST)" ] || [ -z "$(SSH_USER)" ]; then \
+		echo "✗ Configure SSH_HOST e SSH_USER em local.mk antes de abrir o túnel."; \
+		exit 1; \
+	fi
 	@if pgrep -f "ssh.*-L $(REDIS_PORT):$(REDIS_HOST):$(REDIS_PORT)" > /dev/null; then \
 		echo "Túnel SSH já está ativo na porta $(REDIS_PORT)."; \
 	else \

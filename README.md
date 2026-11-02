@@ -1,8 +1,16 @@
 # harness-state
 
-Cliente oficial de State Tracking para a Plataforma de Harness SDD Federada (`eduardosan`).
+Cliente e CLI oficial de State Tracking para a esteira de desenvolvimento
+guiado por especificações (SDD federada).
 
-Permite sincronizar o progresso de especificações (`SPEC-ID`), tarefas multi-repositório e bloqueios de trabalho concorrente diretamente no Redis central do Proxmox.
+Permite sincronizar o progresso de especificações (`SPEC-ID`), tarefas
+multi-repositório e o ciclo de execução em um barramento de estado
+compatível com Redis. Licença: [AGPL-3.0](./LICENSE).
+
+## Fluxo (sem dependência de infraestrutura específica)
+
+Consulte [`docs/flow.md`](./docs/flow.md) para o fluxo completo analogizado:
+**plan → status → update → resume** sobre ondas topológicas de sub-tarefas.
 
 ## Instalação
 
@@ -10,39 +18,29 @@ Permite sincronizar o progresso de especificações (`SPEC-ID`), tarefas multi-r
 uv tool install git+https://github.com/eduardosan/harness-state.git
 ```
 
-## Conexão ao Redis
-
-Como o Redis opera na rede privada interna do Proxmox (`192.168.20.5:6379`), você pode iniciar o túnel SSH em background diretamente pelo Makefile:
+Ou clone e instale localmente:
 
 ```bash
-# Iniciar o túnel SSH em background
-make tunnel
-
-# Verificar se o túnel está ativo
-make tunnel-check
-
-# Encerrar o túnel
-make tunnel-stop
+make install-local   # instala no .venv do projeto
+make install-global  # instala via uv tool no PATH do usuário
 ```
 
-O comando executado por baixo dos panos é:
-```bash
-ssh -p 8 -N -f -L 6379:192.168.20.5:6379 eduardo@pve2.for.mat.br
-```
+## Conexão ao barramento de estado
 
-Por padrão, o `harness-state` conecta em `localhost:6379` sem senha.
-
-## Instalação da CLI
-
-Você pode instalar a CLI globalmente ou no ambiente virtual do projeto:
+Qualquer serviço compatível com Redis serve. Configure por variáveis de
+ambiente:
 
 ```bash
-# Instalação global via uv tool (acessível no PATH de qualquer terminal)
-make install-global
-
-# Instalação local no venv (.venv)
-make install-local
+export HARNESS_REDIS_HOST="127.0.0.1"
+export HARNESS_REDIS_PORT="6379"
+export HARNESS_REDIS_DB="0"
+# opcional:
+export HARNESS_REDIS_PASSWORD="..."
 ```
+
+Se o barramento ficar atrás de uma rede privada, um túnel SSH padrão
+resolve. O Makefile traz um exemplo genérico e parametrizável (`make
+tunnel`), com overrides via `local.mk` (ignorado pelo git).
 
 ## Comandos Principais
 
@@ -53,6 +51,19 @@ harness-state plan --spec specs/SPEC-042.md
 # Visualizar o status consolidado de uma spec
 harness-state status SPEC-042
 
-# Retomar o trabalho no ambiente atual (faz checkout da branch pendente)
+# Retomar o trabalho no ambiente atual (checkout da branch pendente)
 harness-state resume SPEC-042
 ```
+
+## Desenvolvimento
+
+```bash
+uv sync              # sincroniza dependências
+uv run pytest        # suíte de testes
+uv run pyright       # checagem de tipos
+uv run ruff check .  # linter
+uv run isort --check-only .
+```
+
+Regiões do projeto (regras de arquitetura e python fluente) em
+[`AGENTS.md`](./AGENTS.md).
