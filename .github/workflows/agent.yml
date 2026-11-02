@@ -1,0 +1,17 @@
+name: Agent Dispatch
+
+# Repo alvo apenas delega para o workflow centralizado com vendoring e dispara o hub (agentic-flywheel).
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  dispatch:
+    if: github.event.label.name == 'agent-run'
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    uses: paralax-ia/actions-workflows/.github/workflows/agent-dispatch.yml@main
+    secrets:
+      FLYWHEEL_DISPATCH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
