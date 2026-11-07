@@ -9,6 +9,41 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from harness_state.models import SpecRun, TaskState
 
 
+def parse_spec_reference(raw_spec_id: str) -> tuple[str, str]:
+    """Divide uma referência de spec em `(ecosistema, spec_id)` (SPEC-005 C1).
+
+    Referências namespaced usam o formato `{ecosistema}/{SPEC-XXX}` (ex:
+    `harness/SPEC-005`); sem prefixo, o comportamento é o legado
+    (ecosistema vazio, chave Redis não namespaced).
+
+    Args:
+        raw_spec_id: Referência de spec como recebida nas CLIs.
+
+    Returns:
+        Tupla `(ecosistema, spec_id)` — ecosistema vazio quando legado.
+    """
+    if "/" in raw_spec_id:
+        ecosystem, _, spec_id = raw_spec_id.partition("/")
+        return ecosystem, spec_id
+    return "", raw_spec_id
+
+
+def redis_spec_key(ecosystem: str, spec_id: str) -> str:
+    """Constrói a chave Redis da spec conforme o namespace (SPEC-005 C1).
+
+    Args:
+        ecosystem: Namespace do ecossistema (vazio = legado).
+        spec_id: Identificador da especificação.
+
+    Returns:
+        `spec:{ecosistema}:{spec_id}` quando namespaced; `spec:{spec_id}`
+        quando legado.
+    """
+    if ecosystem:
+        return f"spec:{ecosystem}:{spec_id}"
+    return f"spec:{spec_id}"
+
+
 class Settings(BaseSettings):
     """Configurações de conexão do Redis para o barramento central."""
 
@@ -96,7 +131,8 @@ class InMemoryStateStore:
         Args:
             spec: Instância da especificação a ser armazenada.
         """
-        self._specs[spec.spec_id] = spec.model_copy(deep=True)
+        ecosystem, spec_id = parse_spec_reference(spec.spec_id)
+        self._specs[redis_spec_key(ecosystem, spec_id)] = spec.model_copy(deep=True)
 
     async def get_spec(self, spec_id: str) -> SpecRun | None:
         """Recupera a especificação em memória.
@@ -107,7 +143,8 @@ class InMemoryStateStore:
         Returns:
             Cópia da especificação ou None se inexistente.
         """
-        spec = self._specs.get(spec_id)
+        ecosystem, parsed_id = parse_spec_reference(spec_id)
+        spec = self._specs.get(redis_spec_key(ecosystem, parsed_id))
         if spec is None:
             return None
         return spec.model_copy(deep=True)
@@ -132,7 +169,8 @@ class InMemoryStateStore:
         Returns:
             SpecRun atualizada ou None caso não exista.
         """
-        spec = self._specs.get(spec_id)
+        ecosystem, parsed_id = parse_spec_reference(spec_id)
+        spec = self._specs.get(redis_spec_key(ecosystem, parsed_id))
         if spec is None or task_id not in spec:
             return None
 
@@ -230,7 +268,8 @@ class StateStore:
             spec: Instância da especificação a ser persistida.
         """
         client = self.get_client()
-        key = f"spec:{spec.spec_id}"
+        ecosystem, spec_id = parse_spec_reference(spec.spec_id)
+        key = redis_spec_key(ecosystem, spec_id)
         await client.set(key, spec.model_dump_json())
 
     async def get_spec(self, spec_id: str) -> SpecRun | None:
@@ -243,7 +282,8 @@ class StateStore:
             SpecRun correspondente ou None se não encontrada.
         """
         client = self.get_client()
-        key = f"spec:{spec_id}"
+        ecosystem, parsed_id = parse_spec_reference(spec_id)
+        key = redis_spec_key(ecosystem, parsed_id)
         data = await client.get(key)
         if not data:
             return None
