@@ -1,8 +1,10 @@
 """Interface de linha de comando para o harness-state."""
 
 import asyncio
+import json
 import re
 from pathlib import Path
+from typing import Any
 
 import click
 import yaml
@@ -372,6 +374,57 @@ async def run_resume(
         console.print(f"Para iniciar execute: [bold white]git checkout {next_task.branch}[/bold white]")
 
 
+
+
+def list_available_plugins() -> list[Any]:
+    """Lista plugins disponíveis no grupo de entry points `harness.plugins`.
+
+    Returns:
+        Lista de entry points registrados (vazia quando nenhum plugin).
+    """
+    from importlib.metadata import entry_points
+
+    return list(entry_points(group="harness.plugins"))
+
+
+def load_plugins_into(group: click.Group) -> None:
+    """Carrega plugins externos dentro do grupo da CLI pública.
+
+    Plugins declaram um entry point no grupo `harness.plugins` apontando
+    para uma função `register(group: click.Group) -> None`. Cada um:
+
+    - registra subgrupos/comandos privados sobre o núcleo;
+    - NUNCA sobrescreve um comando público já existente (skip + aviso);
+    - falha de plugin é reportada no stderr e não derruba a CLI.
+
+    Args:
+        group: Grupo click de destino (o grupo raiz `harness`).
+    """
+    for entry_point in list_available_plugins():
+        try:
+            register = entry_point.load()
+            candidate = click.Group(f"__probe_{entry_point.name}")
+            register(candidate)
+        except Exception as exc:  # noqa: BLE001 — aviso e continuação são o contrato do plugin registry
+            click.echo(
+                f"[harness] plugin '{entry_point.name}' falhou ao carregar: "
+                f"{exc}",
+                err=True,
+            )
+            continue
+        for name, command in candidate.commands.items():
+            if name in group.commands:
+                click.echo(
+                    f"[harness] plugin '{entry_point.name}' tentou sobrescrever "
+                    f"o comando '{name}' (público) — rejeitado.",
+                    err=True,
+                )
+                continue
+            group.add_command(command, name=name)
+
+
+
+
 @click.group()
 def main() -> None:
     """CLI oficial de gerenciamento de estado da Plataforma SDD (eduardosan)."""
@@ -434,3 +487,41 @@ def plan(
 def resume(spec_id: str) -> None:
     """Retoma o trabalho no ambiente atual identificando a próxima tarefa pendente."""
     asyncio.run(run_resume(spec_id=spec_id))
+
+
+def run_get_spec(
+    spec_id: str,
+    store: StateStoreProtocol | None = None,
+) -> None:
+    """Executa o `get-spec` read-only: imprime o SpecRun em JSON.
+
+    Args:
+        spec_id: Referência da spec (`ecosistema/SPEC-XXX` ou `SPEC-XXX`).
+        store: Instância opcional de persistência.
+    """
+    active_store = store or StateStore()
+    spec = asyncio.run(_get_spec_for_cli(spec_id, active_store))
+    if spec is None:
+        console.print(
+            f"[bold red]Erro:[/bold red] Spec [bold cyan]{spec_id}[/bold cyan] "
+            "não encontrada."
+        )
+        raise SystemExit(1)
+    console.print_json(json.dumps(spec.model_dump(mode="json")))
+
+
+async def _get_spec_for_cli(
+    spec_id: str, active_store: StateStoreProtocol
+) -> SpecRun | None:
+    async with active_store:
+        return await active_store.get_spec(spec_id)
+
+
+@main.command(name="get-spec")
+@click.argument("spec_id")
+def get_spec_cmd(spec_id: str) -> None:
+    """Imprime o SpecRun como JSON (read-only, para agentes e integrações)."""
+    run_get_spec(spec_id=spec_id)
+
+
+load_plugins_into(main)

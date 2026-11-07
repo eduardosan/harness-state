@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 harness-state = "harness_state.cli:main"
+harness = "harness_state.cli:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -7,7 +7,6 @@ from harness_state.client import (
     parse_spec_reference,
     redis_spec_key,
 )
-from harness_state.client import InMemoryStateStore, redis_spec_key
 from harness_state.models import SpecRun
 
 
