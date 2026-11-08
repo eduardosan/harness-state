@@ -1,7 +1,8 @@
 name: Tag and Release from Main (post-squash only)
 
 # SPEC-006 Onda 2 (D3.4) — release público AGPL-3.0, tag cortada no SHA
-# pós-squash da main (nunca head de PR).
+# pós-squash da main (nunca head de PR). Bump por Conventional Commits,
+# versão do pacote sincronizada com a tag antes do build.
 
 on:
   push:
@@ -41,48 +42,49 @@ jobs:
         id: semver
         env:
           COMMIT_TITLE: ${{ github.event.head_commit.message }}
+          EXPLICIT_BUMP: ${{ inputs.bump || '' }}
         run: |
           git fetch --tags --force
           LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
-          TITLE="${COMMIT_TITLE:-$(git log -1 --pretty=%s github.sha)}"
-          BUMP="${{ inputs.bump || 'patch' }}"
+          TITLE="${COMMIT_TITLE:-$(git log -1 --pretty=%s "${GITHUB_SHA}")}"
           case "$TITLE" in
-            *BREAKING*|"feat:"|"feat("*) OUT=minor ;;
-            *!*) OUT=major ;;
-            *) OUT=patch ;;
+            *"!"*) INFERRED="major" ;;
+            feat:*) INFERRED="minor" ;;
+            "feat("*) INFERRED="minor" ;;
+            *) INFERRED="patch" ;;
           esac
-          if [ -n "$BUMP" ] && [ "$BUMP" != "patch" ]; then OUT="$BUMP"; fi
-          echo "bump=$OUT" >> "$GITHUB_OUTPUT"
+          case "$TITLE" in
+            *BREAKING*|*breaking*) INFERRED="major" ;;
+          esac
+          BUMP="${EXPLICIT_BUMP:-$INFERRED}"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
 
       - name: Sincronizar versão do pacote com a tag
         id: tag
         env:
           BUMP: ${{ steps.semver.outputs.bump }}
         run: |
-          BASE_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          NEXT=$(python3 - "$BASE_VERSION" "$BUMP" <<'PY'
-          import sys
-          major, minor, patch = (int(x) for x in sys.argv[1].split("."))
-          kind = sys.argv[2]
-          if kind == "major":
-              print(f"{major + 1}.0.0")
-          elif kind == "minor":
-              print(f"{major}.{minor + 1}.0")
-          else:
-              print(f"{major}.{minor}.{patch + 1}")
-          PY
-          )
+          BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
+          NEXT=$(awk -v sv="$BASE_VERSION" -v kind="$BUMP" 'BEGIN{
+            split(sv, a, ".");
+            if (kind == "major") print (a[1]+1)".0.0";
+            else if (kind == "minor") print a[1]"."(a[2]+1)".0";
+            else print a[1]"."a[2]"."(a[3]+1);
+          }')
           TAG="v$NEXT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG já existe — release idempotente."
+            echo "tag=" >> "$GITHUB_OUTPUT"
           else
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Sincronizar versão no pyproject
         if: steps.tag.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          sed -i "s/^version = .*/version = \"${{ steps.tag.outputs.tag#v }}\"/" pyproject.toml
+          sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
           grep "^version = " pyproject.toml
 
       - name: Build wheel e sdist
