@@ -27,16 +27,12 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, revisão do operador): o release do núcleo é
-  # INDEPENDENTE — este job valida o produtor (testes + superfície pública
-  # da CLI instalável sozinha). A validação da APLICAÇÃO COMPLETA
-  # (flywheel + núcleo novo) pertence ao CONSUMIDOR e acontece na PR de
-  # bump gerada pelo `dependency-update.yml` — a CI da aplicação é o gate
-  # "harness completo antes do release **do consumidor**". A affordance
-  # elegante de "avaliar o completo e pegar o resultado" será um
-  # `workflow_call` público deste repo quando o AGPL-3.0 abrir (a exceção
-  # foi avaliada e recusada neste ciclo: polling via gh CLI acoplava o
-  # produtor ao consumidor).
+  # Racional (SPEC-006, diretriz final do operador): O release do núcleo é
+  # independente do FLYWHEEL na estrutura (sem gh CLI/polling) — mas a
+  # diretriz "produtor chama o consumidor e espera o resultado" é fronteira
+  # oficial do corte: o job `harness-complete` abaixo usa o `workflow_call`
+  # reutilizável do flywheel (`uses:` × `secrets:`) e o `tag-and-release`
+  # espera o output. A affordance se tornou nativa do GitHub Actions.
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -65,8 +61,15 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  tag-and-release:
+  harness-complete:
+    name: "Aplicação completa valida o núcleo antes do corte"
     needs: [tests, public-surface-smoke]
+    uses: eduardosan/agentic-flywheel/.github/workflows/harness-complete.yml@main
+    secrets:
+      flywheel_token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+
+  tag-and-release:
+    needs: [tests, public-surface-smoke, harness-complete]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout da main
