@@ -27,6 +27,12 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
+  # Racional (SPEC-006, diretriz final do operador): O release do núcleo é
+  # independente do FLYWHEEL na estrutura (sem gh CLI/polling) — mas a
+  # diretriz "produtor chama o consumidor e espera o resultado" é fronteira
+  # oficial do corte: o job `harness-complete` abaixo usa o `workflow_call`
+  # reutilizável do flywheel (`uses:` × `secrets:`) e o `tag-and-release`
+  # espera o output. A affordance se tornou nativa do GitHub Actions.
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -56,19 +62,11 @@ jobs:
           /tmp/public-cli/bin/harness get-spec --help
 
   harness-complete:
+    name: "Aplicação completa valida o núcleo antes do corte"
     needs: [tests, public-surface-smoke]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Disparar e aguardar a suíte completa da aplicação (runner self-hosted do flywheel)
-        env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-        run: |
-          gh workflow run "Unit Tests & Code Quality Gate" --repo eduardosan/agentic-flywheel --ref main
-          sleep 5
-          RUN_ID=$(gh run list --repo eduardosan/agentic-flywheel --branch main --workflow "Unit Tests & Code Quality Gate" --limit 1 --json databaseId -q ".[0].databaseId")
-          echo "Suíte completa: run $RUN_ID"
-          gh run watch "$RUN_ID" --repo eduardosan/agentic-flywheel --exit-status
+    uses: eduardosan/agentic-flywheel/.github/workflows/harness-complete.yml@main
+    secrets:
+      flywheel_token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
 
   tag-and-release:
     needs: [tests, public-surface-smoke, harness-complete]
