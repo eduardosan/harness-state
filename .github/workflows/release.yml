@@ -27,12 +27,13 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, diretriz final do operador): O release do núcleo é
-  # independente do FLYWHEEL na estrutura (sem gh CLI/polling) — mas a
-  # diretriz "produtor chama o consumidor e espera o resultado" é fronteira
-  # oficial do corte: o job `harness-complete` abaixo usa o `workflow_call`
-  # reutilizável do flywheel (`uses:` × `secrets:`) e o `tag-and-release`
-  # espera o output. A affordance se tornou nativa do GitHub Actions.
+  # Racional (SPEC-006, diretriz final do operador, decisão A: REUSAR o
+  # agentic-harness): o produtor DESPACHA `agent-run` (target = este repo)
+  # e cria a issue de release-eval; o flywheel roda `just verify` + deepeval
+  # no SELF-HOSTED local e devolve `repository_dispatch release-gate-result`;
+  # o workflow `release-cut.yml` corta a tag quando chega success.
+  # (A tentativa de `uses: workflow_call privado` foi recusada no load pelo
+  # próprio GitHub — reusable privado não pode ser chamado cross-repo.)
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -61,12 +62,49 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  harness-complete:
-    name: "Aplicação completa valida o núcleo antes do corte"
+  dispatch-harness-complete:
+    name: "Disparar avaliação completa (agentic-harness)"
     needs: [tests, public-surface-smoke]
-    uses: eduardosan/agentic-flywheel/.github/workflows/harness-complete.yml@main
-    secrets:
-      flywheel_token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Criar labels do ciclo de execução (idempotente)
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+        run: |
+          gh label create agent-run --repo "$GITHUB_REPOSITORY" --color 1D76DB --description "Execução da esteira federada via Agentic Flywheel (SDD)" --force
+          gh label create agent-spec --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "PR de sub-spec federada (SDD)" --force
+
+      - name: Abrir issue de release-eval
+        id: abrir-issue
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          ISSUE_URL=$(gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "release-eval: núcleo ${GITHUB_SHA::7} (harness completo)" \
+            --label agent-run,agent-spec \
+            --body "Avaliação completa deste release pela aplicação Agentic Flywheel. Rastreio: ${{ github.server_url }}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          ISSUE_NUMBER="${ISSUE_URL##*/}"
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: repository_dispatch agent-run ao flywheel
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.abrir-issue.outputs.issue_number }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api \
+            "repos/eduardosan/agentic-flywheel/dispatches" \
+            -X POST \
+            -f event_type=agent-run \
+            -f "client_payload[repo]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[issue_number]=${ISSUE_NUMBER}" \
+            -f "client_payload[spec_id]=SPEC-007" \
+            -f "client_payload[origin]=release-gate" \
+            -f "client_payload[origin_run_id]=${RUN_ID}" \
+            -f "client_payload[sha]=${SHA}"
 
   tag-and-release:
     needs: [tests, public-surface-smoke, harness-complete]

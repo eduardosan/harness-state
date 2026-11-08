@@ -1,0 +1,144 @@
+name: Release Cut (após avaliação completa pelo agentic-harness)
+
+# SPEC-006 (call-and-back): disparado pelo `repository_dispatch`
+# `release-gate-result` que o agentic-harness (flywheel SELF-HOSTED) envia
+# ao avaliar a aplicação completa sobre o núcleo. Corta a tag/Release
+# somente com `conclusion == success`; em falha, comenta a issue de
+# release-eval e não corta.
+
+on:
+  repository_dispatch:
+    types: [release-gate-result]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Número da issue de release-eval (modo manual)"
+        required: true
+        type: string
+      sha:
+        description: "SHA do commit a cortar (default: HEAD)"
+        required: false
+        type: string
+      conclusion:
+        description: "Confirmação manual do gate (success)"
+        required: false
+        default: "success"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cut-${{ github.event.client_payload.origin_run_id || inputs.sha }}
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do commit avaliado
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.eval_sha || inputs.sha }}
+          fetch-depth: 0
+
+      - name: Conferência do gate da aplicação completa
+        env:
+          CONCLUSION: ${{ github.event.client_payload.conclusion || inputs.conclusion }}
+        run: |
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Gate da aplicação completa NÃO aprovado (conclusion=$CONCLUSION) — tag não cortada."
+            exit 1
+          fi
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Calcular próxima tag SemVer (Conventional Commits)
+        id: semver
+        env:
+          COMMIT_TITLE: ${{ github.event.head_commit.message }}
+          EXPLICIT_BUMP: ""
+        run: |
+          git fetch --tags --force
+          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          TITLE="${COMMIT_TITLE:-$(git log -1 --pretty=%s "${GITHUB_SHA}")}"
+          case "$TITLE" in
+            *"!"*) INFERRED="major" ;;
+            feat:*) INFERRED="minor" ;;
+            "feat("*) INFERRED="minor" ;;
+            *) INFERRED="patch" ;;
+          esac
+          case "$TITLE" in
+            *BREAKING*|*breaking*) INFERRED="major" ;;
+          esac
+          BUMP="${EXPLICIT_BUMP:-$INFERRED}"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+
+      - name: Sincronizar versão do pacote com a tag
+        id: tag
+        env:
+          BUMP: ${{ steps.semver.outputs.bump }}
+        run: |
+          BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
+          NEXT=$(awk -v sv="$BASE_VERSION" -v kind="$BUMP" 'BEGIN{
+            split(sv, a, ".");
+            if (kind == "major") print (a[1]+1)".0.0";
+            else if (kind == "minor") print a[1]"."(a[2]+1)".0";
+            else print a[1]"."a[2]"."(a[3]+1);
+          }')
+          TAG="v$NEXT"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG já existe — release idempotente."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sincronizar versão no pyproject
+        if: steps.tag.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
+          grep "^version = " pyproject.toml
+
+      - name: Build wheel e sdist
+        if: steps.tag.outputs.tag != ''
+        run: uv build
+
+      - name: Criar tag anotada no SHA avaliado
+        if: steps.tag.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA_EVAL: ${{ github.event.client_payload.eval_sha || inputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "${SHA_EVAL}" -m "Release $TAG (núcleo aprovado pela aplicação completa)"
+          git push origin "$TAG"
+
+      - name: Criar GitHub Release
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+
+      - name: Comentário de acompanhamento na issue de release-eval
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || inputs.issue_number }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ -n "$TAG" ] && [ -n "$ISSUE_NUMBER" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "✅ Release \`$TAG\` cortada com o gate completo da aplicação."
+          fi
+
+      - name: Comentário de falha na issue de release-eval
+        if: failure() && github.event.client_payload.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "❌ Falha ao cortar a release após o gate da aplicação completa. Rastreie: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${{ github.run_id }}"
