@@ -63,38 +63,29 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  harness-complete:
-    name: "Aplicação completa valida o núcleo antes do corte"
+  dispatch-hub-complete:
+    name: "Disparar avaliação completa no runner self-hosted do hub"
     needs: [tests, public-surface-smoke]
-    runs-on: self-hosted
-    timeout-minutes: 25
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout da aplicação completa
-        uses: actions/checkout@v4
-        with:
-          repository: eduardosan/agentic-flywheel
-          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-          fetch-depth: 0
-
-      - name: Instalar uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Sincronizar dependências da aplicação
-        run: uv sync --all-groups
-
-      - name: Configuração do harness (ambiente local do runner)
-        run: uv run harness setup --ci
-
-      - name: Suíte completa da aplicação
-        run: uv run pytest tests/unit --no-header -q
-
-      - name: Superfície composta da CLI
+      - name: repository_dispatch harness-complete-eval ao hub
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ steps.abrir-issue.outputs.issue_number }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
         run: |
-          uv run harness --help | grep -qE "bug|slack|verify"
-          uv run harness spec --help | grep -qE "run"
+          gh api "repos/eduardosan/harness-spec-hub/dispatches" \
+            -X POST \
+            -f event_type=harness-complete-eval \
+            -f "client_payload[core_repo]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[eval_sha]=${SHA}" \
+            -f "client_payload[state_repo]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[issue_number]=${ISSUE_NUMBER}" \
+            -f "client_payload[origin_run_id]=${RUN_ID}"
 
   tag-and-release:
-    needs: [tests, public-surface-smoke, harness-complete]
+    needs: [tests, public-surface-smoke, dispatch-hub-complete]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout da main
