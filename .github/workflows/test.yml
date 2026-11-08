@@ -1,0 +1,39 @@
+name: Testes (antes de qualquer merge)
+
+# SPEC-006 nota do operador: testes rodando ANTES do merge — em PRs para a
+# main e em pushes nela (defesa contra push direto do operador).
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: state-tests-${{ github.ref }}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Instalar dependências (incl. dev = pyright)
+        run: uv sync --all-groups
+
+      - name: Tipagem estática (pyright)
+        run: uv run pyright src tests
+
+      - name: Testes unitários
+        run: uv run pytest tests --no-header -q
+
+      - name: Estilo (ruff + isort)
+        run: |
+          uv run ruff check src tests
+          uv run isort --check-only src tests

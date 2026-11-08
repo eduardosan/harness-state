@@ -42,6 +42,7 @@ async def test_in_memory_store_namespaced_specs_are_isolated() -> None:
     from_harness = await store.get_spec("harness/SPEC-999")
     from_legacy = await store.get_spec("SPEC-999")
 
+    assert from_harness is not None and from_legacy is not None
     assert from_harness.title == "H" and from_legacy.title == "P"
 
 
@@ -55,5 +56,6 @@ async def test_specs_with_same_id_and_different_ecosystems_do_not_collide() -> N
     harness_spec = await store.get_spec("harness/SPEC-001")
     paralax_spec = await store.get_spec("paralax-ia/SPEC-001")
 
+    assert harness_spec is not None and paralax_spec is not None
     assert harness_spec.title == "H"
     assert paralax_spec.title == "P"

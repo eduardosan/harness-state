@@ -27,7 +27,63 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-groups
+      - name: Tipagem estática (pyright)
+        run: uv run pyright src tests
+      - name: Testes unitários
+        run: uv run pytest tests --no-header -q
+
+  public-surface-smoke:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-groups
+      - name: Build wheel e sdist
+        run: uv build
+      - name: Instalar wheel em venv hermético e validar superfície pública
+        run: |
+          uv venv /tmp/public-cli
+          VIRTUAL_ENV=/tmp/public-cli uv pip install dist/*.whl
+          /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
+          /tmp/public-cli/bin/harness get-spec --help
+
+  harness-complete:
+    needs: [tests, public-surface-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout agentic-flywheel (aplicação completa)
+        uses: actions/checkout@v4
+        with:
+          repository: eduardosan/agentic-flywheel
+          path: .flywheel_src
+          ref: main
+          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Autenticar git para resolver a dependência privada do núcleo
+        env:
+          GIT_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Executar a suíte completa da aplicação contra o núcleo
+        working-directory: .flywheel_src
+        run: |
+          uv sync --all-groups
+          uv run pytest tests/unit --no-header -q
+
   tag-and-release:
+    needs: [tests, public-surface-smoke, harness-complete]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout da main

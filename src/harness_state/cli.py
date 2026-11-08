@@ -279,25 +279,12 @@ async def run_plan(
 
     parsed_subtasks: dict[str, SubTask] = {}
     if spec_file is not None:
-        file_path = Path(spec_file)
-        if not file_path.exists():
-            console.print(f"[bold red]Erro:[/bold red] Arquivo {spec_file} não encontrado.")
-            return
-
-        # Auto-descobre manifest.yaml se não fornecido
-        target_manifest = Path(manifest_file) if manifest_file else None
-        if target_manifest is None:
-            # Procura no diretório pai ou no hub paralax-spec-hub
-            candidate_same_dir = file_path.parent / "manifest.yaml"
-            candidate_parent = file_path.parent.parent / "manifest.yaml"
-            if candidate_same_dir.exists():
-                target_manifest = candidate_same_dir
-            elif candidate_parent.exists():
-                target_manifest = candidate_parent
-
-        parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(
-            file_path, manifest_path=target_manifest
+        file_context = resolve_spec_file_context(
+            spec_file=spec_file, manifest_file=manifest_file
         )
+        if file_context is None:
+            return
+        _target_manifest, parsed_id, parsed_title, parsed_subtasks = file_context
         target_spec_id = target_spec_id or parsed_id
         target_title = title or parsed_title
 
@@ -500,7 +487,7 @@ def run_get_spec(
         store: Instância opcional de persistência.
     """
     active_store = store or StateStore()
-    spec = asyncio.run(_get_spec_for_cli(spec_id, active_store))
+    spec = asyncio.run(get_spec_for_cli(spec_id, active_store))
     if spec is None:
         console.print(
             f"[bold red]Erro:[/bold red] Spec [bold cyan]{spec_id}[/bold cyan] "
@@ -510,7 +497,7 @@ def run_get_spec(
     console.print_json(json.dumps(spec.model_dump(mode="json")))
 
 
-async def _get_spec_for_cli(
+async def get_spec_for_cli(
     spec_id: str, active_store: StateStoreProtocol
 ) -> SpecRun | None:
     async with active_store:
@@ -525,3 +512,41 @@ def get_spec_cmd(spec_id: str) -> None:
 
 
 load_plugins_into(main)
+
+
+def resolve_spec_file_context(
+    spec_file: str, manifest_file: str | None
+) -> tuple[Path | None, str, str, dict[str, SubTask]] | None:
+    """Resolve o contexto de arquivo de spec e manifest para o run_plan.
+
+    Auto-descobre manifest.yaml quando não fornecido (cwd do arquivo, pai ou
+    o hub declarado oficialmente).
+
+    Args:
+        spec_file: Caminho informado pelo operador.
+        manifest_file: Manifest do hub, quando declarado.
+
+    Returns:
+        Tupla `(manifest_resolvido, spec_id, title, subtasks)` — None quando
+        o arquivo informado não existe (erro já impresso no console).
+    """
+    file_path = Path(spec_file)
+    if not file_path.exists():
+        console.print(f"[bold red]Erro:[/bold red] Arquivo {spec_file} não encontrado.")
+        return None
+
+    # Auto-descobre manifest.yaml se não fornecido
+    target_manifest = Path(manifest_file) if manifest_file else None
+    if target_manifest is None:
+        # Procura no diretório pai ou no hub paralax-spec-hub
+        candidate_same_dir = file_path.parent / "manifest.yaml"
+        candidate_parent = file_path.parent.parent / "manifest.yaml"
+        if candidate_same_dir.exists():
+            target_manifest = candidate_same_dir
+        elif candidate_parent.exists():
+            target_manifest = candidate_parent
+
+    parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(
+        file_path, manifest_path=target_manifest
+    )
+    return target_manifest, parsed_id, parsed_title, parsed_subtasks
