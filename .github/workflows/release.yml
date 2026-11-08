@@ -27,13 +27,14 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, diretriz final do operador, decisão A: REUSAR o
-  # agentic-harness): o produtor DESPACHA `agent-run` (target = este repo)
-  # e cria a issue de release-eval; o flywheel roda `just verify` + deepeval
-  # no SELF-HOSTED local e devolve `repository_dispatch release-gate-result`;
-  # o workflow `release-cut.yml` corta a tag quando chega success.
-  # (A tentativa de `uses: workflow_call privado` foi recusada no load pelo
-  # próprio GitHub — reusable privado não pode ser chamado cross-repo.)
+  # Racional (SPEC-006, diretriz final do operador): o produtor chama o
+  # consumidor e ESPERA o resultado antes de cortar a tag. A tentativa via
+  # `uses:` cross-repo (workflow_call privado) foi RECUSADA pelo próprio
+  # GitHub no load (reusable workflow privado só pode ser chamado pela
+  # própria repo) — a versão equivalente que funciona: o job abaixo roda no
+  # SELF-HOSTED do estado (mesma CT do runner do flywheel, ambiente local
+  # com Redis/ES/LLM) e executa a suíte completa da aplicação check-out
+  # via FLYWHEEL_DISPATCH_TOKEN (o mesmo mecanismo validado no hub).
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -62,55 +63,115 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  dispatch-harness-complete:
-    name: "Disparar avaliação completa (agentic-harness)"
+  harness-complete:
+    name: "Aplicação completa valida o núcleo antes do corte"
     needs: [tests, public-surface-smoke]
+    runs-on: self-hosted
+    timeout-minutes: 25
+    steps:
+      - name: Checkout da aplicação completa
+        uses: actions/checkout@v4
+        with:
+          repository: eduardosan/agentic-flywheel
+          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sincronizar dependências da aplicação
+        run: uv sync --all-groups
+
+      - name: Configuração do harness (ambiente local do runner)
+        run: uv run harness setup --ci
+
+      - name: Suíte completa da aplicação
+        run: uv run pytest tests/unit --no-header -q
+
+      - name: Superfície composta da CLI
+        run: |
+          uv run harness --help | grep -qE "bug|slack|verify"
+          uv run harness spec --help | grep -qE "run"
+
+  tag-and-release:
+    needs: [tests, public-surface-smoke, harness-complete]
     runs-on: ubuntu-latest
     steps:
-      - name: Gerar token de instalação da GitHub App (eduardo-harness-agent)
-        id: app-token
-        uses: actions/create-github-app-token@v1
+      - name: Checkout da main
+        uses: actions/checkout@v4
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-          owner: eduardosan
+          fetch-depth: 0
 
-      - name: Criar labels do ciclo de execução (idempotente)
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Calcular próxima tag SemVer (Conventional Commits)
+        id: semver
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          COMMIT_TITLE: ${{ github.event.head_commit.message }}
+          EXPLICIT_BUMP: ${{ inputs.bump || '' }}
         run: |
-          gh label create agent-run --repo "$GITHUB_REPOSITORY" --color 1D76DB --description "Execução da esteira federada via Agentic Flywheel (SDD)" --force
-          gh label create agent-spec --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "PR de sub-spec federada (SDD)" --force
+          git fetch --tags --force
+          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          TITLE="${COMMIT_TITLE:-$(git log -1 --pretty=%s "${GITHUB_SHA}")}"
+          case "$TITLE" in
+            *"!"*) INFERRED="major" ;;
+            feat:*) INFERRED="minor" ;;
+            "feat("*) INFERRED="minor" ;;
+            *) INFERRED="patch" ;;
+          esac
+          case "$TITLE" in
+            *BREAKING*|*breaking*) INFERRED="major" ;;
+          esac
+          BUMP="${EXPLICIT_BUMP:-$INFERRED}"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
 
-      - name: Abrir issue de release-eval
-        id: abrir-issue
+      - name: Sincronizar versão do pacote com a tag
+        id: tag
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RUN_ID: ${{ github.run_id }}
-          SHA: ${{ github.sha }}
+          BUMP: ${{ steps.semver.outputs.bump }}
         run: |
-          ISSUE_URL=$(gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "release-eval: núcleo ${GITHUB_SHA::7} (harness completo)" \
-            --label agent-run,agent-spec \
-            --body "Avaliação completa deste release pela aplicação Agentic Flywheel. Rastreio: ${{ github.server_url }}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
-          ISSUE_NUMBER="${ISSUE_URL##*/}"
-          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
+          NEXT=$(awk -v sv="$BASE_VERSION" -v kind="$BUMP" 'BEGIN{
+            split(sv, a, ".");
+            if (kind == "major") print (a[1]+1)".0.0";
+            else if (kind == "minor") print a[1]"."(a[2]+1)".0";
+            else print a[1]"."a[2]"."(a[3]+1);
+          }')
+          TAG="v$NEXT"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG já existe — release idempotente."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: repository_dispatch agent-run ao flywheel
+      - name: Sincronizar versão no pyproject
+        if: steps.tag.outputs.tag != ''
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          ISSUE_NUMBER: ${{ steps.abrir-issue.outputs.issue_number }}
-          RUN_ID: ${{ github.run_id }}
-          SHA: ${{ github.sha }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          gh api \
-            "repos/eduardosan/agentic-flywheel/dispatches" \
-            -X POST \
-            -f event_type=agent-run \
-            -f "client_payload[repo]=${GITHUB_REPOSITORY}" \
-            -f "client_payload[issue_number]=${ISSUE_NUMBER}" \
-            -f "client_payload[spec_id]=SPEC-007" \
-            -f "client_payload[origin]=release-gate" \
-            -f "client_payload[origin_run_id]=${RUN_ID}" \
-            -f "client_payload[sha]=${SHA}"
+          sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
+          grep "^version = " pyproject.toml
 
+      - name: Build wheel e sdist
+        if: steps.tag.outputs.tag != ''
+        run: uv build
+
+      - name: Criar tag anotada no SHA da main
+        if: steps.tag.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "${{ github.sha }}" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Criar GitHub Release
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
