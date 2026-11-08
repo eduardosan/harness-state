@@ -90,6 +90,10 @@ jobs:
           LLM_EXTERNAL_BASE_URL: ${{ vars.LLM_EXTERNAL_BASE_URL }}
           LLM_INTERNAL_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          SPEC_HUB_ORG: eduardosan
+          SPEC_HUB_REPO: eduardosan/harness-spec-hub
+          FLYWHEEL_REPO: ${{ vars.FLYWHEEL_REPO }}
+          CI: "true"
         run: |
           uv sync --all-groups
           uv run harness setup --ci
