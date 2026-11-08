@@ -7,7 +7,12 @@ on:
 
 jobs:
   dispatch:
-    if: github.event.label.name == 'agent-run'
+    # bots (ex.: eduardo-harness-agent[bot]) NÃO acionam o relay — o
+    # release do núcleo já despacha agent-run diretamente (SPEC-006
+    # call-and-back); este relay é para o operador etiquetar manualmente.
+    if: >-
+      github.event.label.name == 'agent-run' &&
+      !endsWith(github.event.sender.login, '[bot]')
     permissions:
       contents: read
       id-token: write
