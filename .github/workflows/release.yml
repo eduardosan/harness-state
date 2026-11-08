@@ -27,14 +27,13 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, diretriz final do operador): o produtor chama o
-  # consumidor e ESPERA o resultado antes de cortar a tag. A tentativa via
-  # `uses:` cross-repo (workflow_call privado) foi RECUSADA pelo próprio
-  # GitHub no load (reusable workflow privado só pode ser chamado pela
-  # própria repo) — a versão equivalente que funciona: o job abaixo roda no
-  # SELF-HOSTED do estado (mesma CT do runner do flywheel, ambiente local
-  # com Redis/ES/LLM) e executa a suíte completa da aplicação check-out
-  # via FLYWHEEL_DISPATCH_TOKEN (o mesmo mecanismo validado no hub).
+  # Racional (SPEC-006, diretriz final do operador, decisão A: REUSAR o
+  # agentic-harness): o produtor DESPACHA `agent-run` (target = este repo)
+  # e cria a issue de release-eval; o flywheel roda `just verify` + deepeval
+  # no SELF-HOSTED local e devolve `repository_dispatch release-gate-result`;
+  # o workflow `release-cut.yml` corta a tag quando chega success.
+  # (A tentativa de `uses: workflow_call privado` foi recusada no load pelo
+  # próprio GitHub — reusable privado não pode ser chamado cross-repo.)
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -63,35 +62,49 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  harness-complete:
-    name: "Aplicação completa valida o núcleo antes do corte"
+  dispatch-harness-complete:
+    name: "Disparar avaliação completa (agentic-harness)"
     needs: [tests, public-surface-smoke]
-    runs-on: self-hosted
-    timeout-minutes: 25
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout da aplicação completa
-        uses: actions/checkout@v4
-        with:
-          repository: eduardosan/agentic-flywheel
-          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-          fetch-depth: 0
-
-      - name: Instalar uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Sincronizar dependências da aplicação
-        run: uv sync --all-groups
-
-      - name: Configuração do harness (ambiente local do runner)
-        run: uv run harness setup --ci
-
-      - name: Suíte completa da aplicação
-        run: uv run pytest tests/unit --no-header -q
-
-      - name: Superfície composta da CLI
+      - name: Criar labels do ciclo de execução (idempotente)
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
         run: |
-          uv run harness --help | grep -qE "bug|slack|verify"
-          uv run harness spec --help | grep -qE "run"
+          gh label create agent-run --repo "$GITHUB_REPOSITORY" --color 1D76DB --description "Execução da esteira federada via Agentic Flywheel (SDD)" --force
+          gh label create agent-spec --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "PR de sub-spec federada (SDD)" --force
+
+      - name: Abrir issue de release-eval
+        id: abrir-issue
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          ISSUE_URL=$(gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "release-eval: núcleo ${GITHUB_SHA::7} (harness completo)" \
+            --label agent-run,agent-spec \
+            --body "Avaliação completa deste release pela aplicação Agentic Flywheel. Rastreio: ${{ github.server_url }}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          ISSUE_NUMBER="${ISSUE_URL##*/}"
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: repository_dispatch agent-run ao flywheel
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.abrir-issue.outputs.issue_number }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api \
+            "repos/eduardosan/agentic-flywheel/dispatches" \
+            -X POST \
+            -f event_type=agent-run \
+            -f "client_payload[repo]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[issue_number]=${ISSUE_NUMBER}" \
+            -f "client_payload[spec_id]=SPEC-007" \
+            -f "client_payload[origin]=release-gate" \
+            -f "client_payload[origin_run_id]=${RUN_ID}" \
+            -f "client_payload[sha]=${SHA}"
 
   tag-and-release:
     needs: [tests, public-surface-smoke, harness-complete]
