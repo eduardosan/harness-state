@@ -60,44 +60,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Checkout agentic-flywheel (aplicação completa)
-        uses: actions/checkout@v4
-        with:
-          repository: eduardosan/agentic-flywheel
-          path: .flywheel_src
-          ref: main
-          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Autenticar git para resolver a dependência privada do núcleo
+      - name: Disparar e aguardar a suíte completa da aplicação (runner self-hosted do flywheel)
         env:
-          GIT_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
         run: |
-          git config --global url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
-
-      - name: Executar a suíte completa da aplicação contra o núcleo
-        working-directory: .flywheel_src
-        env:
-          ES_EXTERNAL_URL: ${{ vars.ES_EXTERNAL_URL }}
-          ES_INDEX: ${{ vars.ES_INDEX }}
-          ES_INTERNAL_URL: ${{ vars.ES_INTERNAL_URL }}
-          ES_TOKEN: ${{ secrets.ES_TOKEN }}
-          HARNESS_REDIS_HOST: ${{ vars.HARNESS_REDIS_HOST }}
-          HARNESS_REDIS_PORT: ${{ vars.HARNESS_REDIS_PORT }}
-          LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
-          LLM_DEFAULT_MODEL: ${{ vars.LLM_DEFAULT_MODEL }}
-          LLM_EXTERNAL_BASE_URL: ${{ vars.LLM_EXTERNAL_BASE_URL }}
-          LLM_INTERNAL_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
-          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          SPEC_HUB_ORG: eduardosan
-          SPEC_HUB_REPO: eduardosan/harness-spec-hub
-          FLYWHEEL_REPO: ${{ vars.FLYWHEEL_REPO }}
-          CI: "true"
-        run: |
-          uv sync --all-groups
-          uv run harness setup --ci
-          uv run pytest tests/unit --no-header -q
+          gh workflow run "Unit Tests & Code Quality Gate" --repo eduardosan/agentic-flywheel --ref main
+          sleep 5
+          RUN_ID=$(gh run list --repo eduardosan/agentic-flywheel --branch main --workflow "Unit Tests & Code Quality Gate" --limit 1 --json databaseId -q ".[0].databaseId")
+          echo "Suíte completa: run $RUN_ID"
+          gh run watch "$RUN_ID" --repo eduardosan/agentic-flywheel --exit-status
 
   tag-and-release:
     needs: [tests, public-surface-smoke, harness-complete]
