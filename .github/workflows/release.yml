@@ -67,9 +67,17 @@ jobs:
     needs: [tests, public-surface-smoke]
     runs-on: ubuntu-latest
     steps:
+      - name: Gerar token de instalação da GitHub App (eduardo-harness-agent)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: eduardosan
+
       - name: Criar labels do ciclo de execução (idempotente)
         env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh label create agent-run --repo "$GITHUB_REPOSITORY" --color 1D76DB --description "Execução da esteira federada via Agentic Flywheel (SDD)" --force
           gh label create agent-spec --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "PR de sub-spec federada (SDD)" --force
@@ -77,7 +85,7 @@ jobs:
       - name: Abrir issue de release-eval
         id: abrir-issue
         env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
         run: |
@@ -90,7 +98,7 @@ jobs:
 
       - name: repository_dispatch agent-run ao flywheel
         env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUMBER: ${{ steps.abrir-issue.outputs.issue_number }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
