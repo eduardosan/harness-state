@@ -78,8 +78,21 @@ jobs:
 
       - name: Executar a suíte completa da aplicação contra o núcleo
         working-directory: .flywheel_src
+        env:
+          ES_EXTERNAL_URL: ${{ vars.ES_EXTERNAL_URL }}
+          ES_INDEX: ${{ vars.ES_INDEX }}
+          ES_INTERNAL_URL: ${{ vars.ES_INTERNAL_URL }}
+          ES_TOKEN: ${{ secrets.ES_TOKEN }}
+          HARNESS_REDIS_HOST: ${{ vars.HARNESS_REDIS_HOST }}
+          HARNESS_REDIS_PORT: ${{ vars.HARNESS_REDIS_PORT }}
+          LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+          LLM_DEFAULT_MODEL: ${{ vars.LLM_DEFAULT_MODEL }}
+          LLM_EXTERNAL_BASE_URL: ${{ vars.LLM_EXTERNAL_BASE_URL }}
+          LLM_INTERNAL_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           uv sync --all-groups
+          uv run harness setup --ci
           uv run pytest tests/unit --no-header -q
 
   tag-and-release:
