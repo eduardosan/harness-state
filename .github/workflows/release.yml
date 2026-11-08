@@ -27,12 +27,14 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, diretriz final do operador): O release do núcleo é
-  # independente do FLYWHEEL na estrutura (sem gh CLI/polling) — mas a
-  # diretriz "produtor chama o consumidor e espera o resultado" é fronteira
-  # oficial do corte: o job `harness-complete` abaixo usa o `workflow_call`
-  # reutilizável do flywheel (`uses:` × `secrets:`) e o `tag-and-release`
-  # espera o output. A affordance se tornou nativa do GitHub Actions.
+  # Racional (SPEC-006, diretriz final do operador): o produtor chama o
+  # consumidor e ESPERA o resultado antes de cortar a tag. A tentativa via
+  # `uses:` cross-repo (workflow_call privado) foi RECUSADA pelo próprio
+  # GitHub no load (reusable workflow privado só pode ser chamado pela
+  # própria repo) — a versão equivalente que funciona: o job abaixo roda no
+  # SELF-HOSTED do estado (mesma CT do runner do flywheel, ambiente local
+  # com Redis/ES/LLM) e executa a suíte completa da aplicação check-out
+  # via FLYWHEEL_DISPATCH_TOKEN (o mesmo mecanismo validado no hub).
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -64,9 +66,32 @@ jobs:
   harness-complete:
     name: "Aplicação completa valida o núcleo antes do corte"
     needs: [tests, public-surface-smoke]
-    uses: eduardosan/agentic-flywheel/.github/workflows/harness-complete.yml@main
-    secrets:
-      flywheel_token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+    runs-on: self-hosted
+    timeout-minutes: 25
+    steps:
+      - name: Checkout da aplicação completa
+        uses: actions/checkout@v4
+        with:
+          repository: eduardosan/agentic-flywheel
+          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sincronizar dependências da aplicação
+        run: uv sync --all-groups
+
+      - name: Configuração do harness (ambiente local do runner)
+        run: uv run harness setup --ci
+
+      - name: Suíte completa da aplicação
+        run: uv run pytest tests/unit --no-header -q
+
+      - name: Superfície composta da CLI
+        run: |
+          uv run harness --help | grep -qE "bug|slack|verify"
+          uv run harness spec --help | grep -qE "run"
 
   tag-and-release:
     needs: [tests, public-surface-smoke, harness-complete]
