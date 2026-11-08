@@ -27,6 +27,16 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
+  # Racional (SPEC-006, revisão do operador): o release do núcleo é
+  # INDEPENDENTE — este job valida o produtor (testes + superfície pública
+  # da CLI instalável sozinha). A validação da APLICAÇÃO COMPLETA
+  # (flywheel + núcleo novo) pertence ao CONSUMIDOR e acontece na PR de
+  # bump gerada pelo `dependency-update.yml` — a CI da aplicação é o gate
+  # "harness completo antes do release **do consumidor**". A affordance
+  # elegante de "avaliar o completo e pegar o resultado" será um
+  # `workflow_call` público deste repo quando o AGPL-3.0 abrir (a exceção
+  # foi avaliada e recusada neste ciclo: polling via gh CLI acoplava o
+  # produtor ao consumidor).
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -55,23 +65,8 @@ jobs:
           /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
           /tmp/public-cli/bin/harness get-spec --help
 
-  harness-complete:
-    needs: [tests, public-surface-smoke]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Disparar e aguardar a suíte completa da aplicação (runner self-hosted do flywheel)
-        env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-        run: |
-          gh workflow run "Unit Tests & Code Quality Gate" --repo eduardosan/agentic-flywheel --ref main
-          sleep 5
-          RUN_ID=$(gh run list --repo eduardosan/agentic-flywheel --branch main --workflow "Unit Tests & Code Quality Gate" --limit 1 --json databaseId -q ".[0].databaseId")
-          echo "Suíte completa: run $RUN_ID"
-          gh run watch "$RUN_ID" --repo eduardosan/agentic-flywheel --exit-status
-
   tag-and-release:
-    needs: [tests, public-surface-smoke, harness-complete]
+    needs: [tests, public-surface-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout da main
