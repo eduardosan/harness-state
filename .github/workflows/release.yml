@@ -131,7 +131,13 @@ jobs:
         env:
           BUMP: ${{ steps.semver.outputs.bump }}
         run: |
-          BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
+          # BASE do SemVer = o ÚLTIMO TAG real (sort -V), não o patch do pyproject
+          # (o pyproject fica 0.1.0 e o SemVer rebaixa releases depois do 0.2.0)
+          if [ -n "$LATEST_TAG" ]; then
+            BASE_VERSION="${LATEST_TAG#v}"
+          else
+            BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
+          fi
           NEXT=$(awk -v sv="$BASE_VERSION" -v kind="$BUMP" 'BEGIN{
             split(sv, a, ".");
             if (kind == "major") print (a[1]+1)".0.0";
@@ -175,3 +181,17 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+
+      - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api "repos/eduardosan/agentic-flywheel/dispatches" \
+            -X POST \
+            -f event_type=core-released \
+            -f "client_payload[version]=${TAG#v}" \
+            -f "client_payload[conclusion]=success" \
+            -f "client_payload[eval_sha]=${SHA}"
