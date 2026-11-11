@@ -125,11 +125,13 @@ jobs:
           esac
           BUMP="${EXPLICIT_BUMP:-$INFERRED}"
           echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Sincronizar versão do pacote com a tag
         id: tag
         env:
           BUMP: ${{ steps.semver.outputs.bump }}
+          LATEST_TAG: ${{ steps.semver.outputs.latest_tag }}
         run: |
           # BASE do SemVer = o ÚLTIMO TAG real (sort -V), não o patch do pyproject
           # (o pyproject fica 0.1.0 e o SemVer rebaixa releases depois do 0.2.0)
