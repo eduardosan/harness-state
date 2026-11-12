@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ from rich.table import Table
 
 from harness_state.client import StateStore, StateStoreProtocol
 from harness_state.models import SpecRun, SubTask, TaskState
+from harness_state.spec_parser import parse_spec_tasks
 
 console = Console()
 
@@ -45,6 +45,24 @@ def load_manifest_dependencies(manifest_path: Path | None = None) -> dict[str, l
         return dep_map
     except (yaml.YAMLError, OSError):
         return {}
+
+
+def load_manifest_project(manifest_path: Path | None = None) -> str:
+    """Lê o campo `project` do manifest.yaml (namespace do ecossistema).
+
+    Args:
+        manifest_path: Caminho opcional para o arquivo manifest.yaml.
+
+    Returns:
+        Nome do projeto/ecossistema (string vazia quando ausente ou ilegível).
+    """
+    if manifest_path is None or not manifest_path.exists():
+        return ""
+    try:
+        content = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        return str(content.get("project") or "")
+    except (yaml.YAMLError, OSError):
+        return ""
 
 
 def calculate_task_wave(tid: str, subtasks: dict[str, SubTask], visited: set[str]) -> int:
@@ -102,13 +120,14 @@ def calculate_waves(subtasks: dict[str, SubTask], dep_map: dict[str, list[str]])
 
 
 def parse_spec_markdown(
-    file_path: Path, manifest_path: Path | None = None
+    file_path: Path, manifest_path: Path | None = None, ecosystem: str = ""
 ) -> tuple[str, str, dict[str, SubTask]]:
     """Extrai identificador, título e subtarefas de uma especificação em markdown.
 
     Args:
         file_path: Caminho para o arquivo markdown da especificação.
         manifest_path: Caminho opcional para o manifesto com dependências.
+        ecosystem: Namespace do ecossistema (prefixa as branches, SPEC-008).
 
     Returns:
         Tupla contendo (spec_id, title, dict_subtasks).
@@ -116,7 +135,6 @@ def parse_spec_markdown(
     spec_id = file_path.stem
     content = file_path.read_text(encoding="utf-8")
     title = spec_id
-    subtasks: dict[str, SubTask] = {}
 
     for line in content.splitlines():
         stripped = line.strip()
@@ -126,24 +144,18 @@ def parse_spec_markdown(
                 title = candidate
                 break
 
-    task_pattern = re.compile(
-        r"-\s*\[([ xX])\]\s*.*?`([^`]+)`.*?"
+    parsed_tasks = parse_spec_tasks(
+        content.splitlines(), spec_id=spec_id, ecosystem=ecosystem
     )
-    task_index = 1
-    for line in content.splitlines():
-        match = task_pattern.search(line)
-        if match:
-            is_checked = match.group(1).lower() == "x"
-            repo = match.group(2).strip()
-            task_id = f"task-{task_index}"
-            branch_name = f"agent/{spec_id.lower()}-{repo.split('/')[-1]}"
-            subtasks[task_id] = SubTask(
-                id=task_id,
-                repo=repo,
-                branch=branch_name,
-                status=TaskState.APPROVED if is_checked else TaskState.PENDING,
-            )
-            task_index += 1
+    subtasks: dict[str, SubTask] = {
+        task.task_id: SubTask(
+            id=task.task_id,
+            repo=task.repo,
+            branch=task.branch,
+            status=TaskState.APPROVED if task.checked else TaskState.PENDING,
+        )
+        for task in parsed_tasks
+    }
 
     dep_map = load_manifest_dependencies(manifest_path)
     if dep_map:
@@ -547,6 +559,8 @@ def resolve_spec_file_context(
             target_manifest = candidate_parent
 
     parsed_id, parsed_title, parsed_subtasks = parse_spec_markdown(
-        file_path, manifest_path=target_manifest
+        file_path,
+        manifest_path=target_manifest,
+        ecosystem=load_manifest_project(target_manifest),
     )
     return target_manifest, parsed_id, parsed_title, parsed_subtasks
