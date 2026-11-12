@@ -14,16 +14,27 @@ Consulte [`docs/flow.md`](./docs/flow.md) para o fluxo completo analogizado:
 
 ## Instalação
 
+O binário gerado é **`harness`** (o nome do pacote é `harness-state`). Instale
+a última `main` ou pinada em uma release (tag):
+
 ```bash
-uv tool install git+https://github.com/eduardosan/harness-state.git
+# última main (código mais recente)
+uv tool install --force git+https://github.com/eduardosan/harness-state.git
+
+# release específica (recomendado para reprodução)
+uv tool install --force "git+https://github.com/eduardosan/harness-state.git@v0.2.2"
 ```
 
 Ou clone e instale localmente:
 
 ```bash
-make install-local   # instala no .venv do projeto
+make install-local   # instala no .venv do projeto (editable)
 make install-global  # instala via uv tool no PATH do usuário
 ```
+
+> **`--force`** atualiza uma instalação já existente. Como o pacote ainda não
+> está no PyPI, a instalação é via `git+https` (exige credencial de leitura no
+> repositório).
 
 ## Conexão ao barramento de estado
 
@@ -46,13 +57,19 @@ tunnel`), com overrides via `local.mk` (ignorado pelo git).
 
 ```bash
 # Gravar ou atualizar uma nova spec e suas sub-tarefas
-harness-state plan --spec specs/SPEC-042.md
+harness plan --spec specs/SPEC-042.md
 
 # Visualizar o status consolidado de uma spec
-harness-state status SPEC-042
+harness status SPEC-042
+
+# Registrar transição de estado de uma subtarefa
+harness update SPEC-042 task-1 IN_PROGRESS --worker agent --pr 123
 
 # Retomar o trabalho no ambiente atual (checkout da branch pendente)
-harness-state resume SPEC-042
+harness resume SPEC-042
+
+# Imprimir o SpecRun em JSON (read-only, para agentes/integrações)
+harness get-spec SPEC-042
 ```
 
 ## Desenvolvimento
