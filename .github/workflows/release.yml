@@ -184,10 +184,19 @@ jobs:
         run: |
           gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
 
+      - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao flywheel)
+        if: steps.tag.outputs.tag != ''
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: eduardosan
+
       - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
         if: steps.tag.outputs.tag != ''
         env:
-          GH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.tag.outputs.tag }}
           SHA: ${{ github.sha }}
         run: |
