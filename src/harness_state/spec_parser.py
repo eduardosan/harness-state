@@ -207,7 +207,7 @@ def parse_spec_tasks(
         if in_fence:
             continue
 
-        match = canonical_re.search(line)
+        match = canonical_re.match(stripped)
         if match:
             finalize_task(
                 cur_id,
@@ -227,7 +227,7 @@ def parse_spec_tasks(
             continue
 
         if cur_id is None:
-            fallback_match = fallback_re.search(line)
+            fallback_match = fallback_re.match(stripped)
             if fallback_match:
                 tasks.append(
                     make_subtask(
