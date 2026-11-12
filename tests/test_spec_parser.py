@@ -75,3 +75,22 @@ def test_parsed_subtask_is_frozen_dataclass() -> None:
     assert task.pr_number is None
     assert task.checked is False
     assert task.wave == 1
+
+
+def test_inline_code_examples_not_parsed_as_tasks() -> None:
+    """Business Rule: exemplo de formato em inline code (fora de fence) não vira subtarefa."""
+    lines = [
+        "| Parser | Formato |",
+        "| `extract_subtasks_from_lines` | canônico `- [ ] **Sub-tarefa N (\\`repo\\`):**` |",
+        "- **Formato primário (canônico):** `- [ ] **Sub-tarefa N (\\`repo\\`):** ...`",
+        "- **Cenário 1:** dado um corpo com `- [ ] **Sub-tarefa 1 (\\`org/repo\\`):**`,",
+        "## 2. Escopo",
+        "- [x] [Onda 1] `eduardosan/harness-state`: parser canônico.",
+        "- [x] [Onda 2] `eduardosan/agentic-flywheel`: consumidores.",
+    ]
+    tasks = parse_spec_tasks(lines, spec_id="SPEC-008", ecosystem="harness")
+
+    assert [t.repo for t in tasks] == [
+        "eduardosan/harness-state",
+        "eduardosan/agentic-flywheel",
+    ], "só as checkboxes reais (§2) podem virar subtarefas; exemplos inline não"
