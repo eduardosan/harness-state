@@ -7,6 +7,7 @@ from click.testing import CliRunner
 
 from harness_state.cli import (
     main,
+    parse_spec_markdown,
     run_init,
     run_plan,
     run_resume,
@@ -166,3 +167,14 @@ async def test_run_plan_with_manifest_topological_waves(tmp_path: Path) -> None:
     assert crm_task.wave == 1
     assert vehicles_task.wave == 2
     assert crm_task.id in vehicles_task.depends_on
+
+
+def test_parse_spec_markdown_namespaced_branch(tmp_path: Path) -> None:
+    """Business Rule: `harness plan` gera branch namespaced `agent/{eco}-{spec}-{repo}`."""
+    spec = tmp_path / "SPEC-004.md"
+    spec.write_text(
+        "# Titulo\n- [ ] **Sub-tarefa 1 (`agentic-flywheel`):** x\n",
+        encoding="utf-8",
+    )
+    _, _, tasks = parse_spec_markdown(spec, ecosystem="harness")
+    assert tasks["task-1"].branch == "agent/harness-spec-004-agentic-flywheel"
