@@ -15,7 +15,7 @@ tasks:
 product:
 - harness
 capability: agent-workflow-platform
-status: IN_PROGRESS
+status: IMPLEMENTED
 ---
 
 # SPEC-002: Desacoplamento do harness: spec hub federado, CLI anonimizado, bot Slack e infra cloud-harness - harness-state
