@@ -523,7 +523,73 @@ def get_spec_cmd(spec_id: str) -> None:
     run_get_spec(spec_id=spec_id)
 
 
-load_plugins_into(main)
+# ============================================================
+# Flywheel Management Commands (Onda 1 - SPEC-009)
+# ============================================================
+
+
+@click.group(name="flywheel")
+def flywheel_group() -> None:
+    """Gerencia o lifecycle do Flywheel Execution Engine.
+
+    Comandos para inicializar, atualizar e monitorar instâncias do flywheel
+    que rodam pipelines instalados via harness-state.
+    """
+    pass
+
+
+@flywheel_group.command(name="init")
+@click.argument("path", type=click.Path(path_type=Path))
+@click.option("--version", default=None, help="Versão fixa do harness-state/agentic-flywheel (ex: 0.4.0)")
+@click.option("--config", type=click.Path(path_type=Path), default=None, help="Arquivo de configuração customizado")
+def flywheel_init(path: Path, version: str | None, config: Path | None) -> None:
+    """Inicializa um novo Flywheel Execution Engine em <path>.
+
+    Cria estrutura de pastas, pyproject.toml com dependências,
+    workflows CI e config.yaml inicial.
+    """
+    from .flywheel import init_flywheel
+
+    init_flywheel(path, version=version, config_file=config)
+
+
+@flywheel_group.command(name="update")
+@click.argument("path", type=click.Path(path_type=Path))
+@click.option("--version", default=None, help="Versão fixa do harness-state/agentic-flywheel (ex: 0.4.1)")
+@click.option("--dry-run", is_flag=True, help="Apenas mostra o que seria alterado sem aplicar")
+def flywheel_update(path: Path, version: str | None, dry_run: bool) -> None:
+    """Atualiza um Flywheel existente: bump de versões, regenera workflows, valida imports."""
+    from .flywheel import update_flywheel
+
+    update_flywheel(path, version=version, dry_run=dry_run)
+
+
+@flywheel_group.command(name="status")
+@click.argument("path", type=click.Path(path_type=Path))
+def flywheel_status(path: Path) -> None:
+    """Mostra health check do flywheel: versões instaladas vs disponíveis, validação de imports."""
+    from .flywheel import check_flywheel_status
+
+    check_flywheel_status(path)
+
+
+@flywheel_group.command(name="update-all")
+@click.option("--dry-run", is_flag=True, help="Apenas mostra o que seria feito")
+@click.option("--strategy", type=click.Choice(["patch", "minor", "major"]), default="patch", help="Estratégia semver para release")
+@click.option("--only", default=None, help="Atualiza apenas um flywheel específico pelo nome")
+def flywheel_update_all(dry_run: bool, strategy: str, only: str | None) -> None:
+    """Atualiza todos os flywheels configurados no config.yaml com release automático."""
+    from .flywheel import update_all_flywheels
+
+    update_all_flywheels(dry_run=dry_run, strategy=only or None, strategy_semver=strategy)
+
+
+main.add_command(flywheel_group)
+
+
+# ============================================================
+# Config and Flywheel Module Imports (lazy loaded)
+# ============================================================
 
 
 def resolve_spec_file_context(
