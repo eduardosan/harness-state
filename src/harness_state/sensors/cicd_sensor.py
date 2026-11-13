@@ -1,10 +1,9 @@
 """Sensor de CI/CD para validação de pipelines (SPEC-CICD)."""
 
 import re
-import yaml
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List
+
+import yaml
 
 from harness_state.models import CICDViolation
 
@@ -20,36 +19,14 @@ SHELL_MULTILINE_START_PATTERN = re.compile(
 SET_E_PATTERN = re.compile(r"\bset\s+-[a-zA-Z]*e[a-zA-Z]*\b")
 
 
-@dataclass(slots=True)
-class CICDViolation:
-    """Representa uma violação de integridade em arquivo de CI/CD."""
-
-    file_path: Path
-    line_number: int
-    col_number: int
-    code: str
-    message: str
-
-    def format_output(self) -> str:
-        """Formata a violação no padrão consumível por format_feedback.sh.
-
-        Returns:
-            String no formato 'arquivo:linha:coluna: CODIGO mensagem'.
-        """
-        return (
-            f"{self.file_path}:{self.line_number}:{self.col_number}: "
-            f"{self.code} {self.message}"
-        )
-
-
 class CICDValidator:
     """Validador estático de regras de fail-fast e integridade em CI/CD."""
 
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir.resolve()
-        self.violations: List[CICDViolation] = []
+        self.violations: list[CICDViolation] = []
 
-    def find_target_files(self) -> List[Path]:
+    def find_target_files(self) -> list[Path]:
         """Localiza todos os arquivos de GitHub Actions e Cloud Build no projeto."""
         files = []
         github_workflows = self.root_dir / ".github" / "workflows"
@@ -91,8 +68,6 @@ class CICDValidator:
         multiline_active = False
 
         for idx, line in enumerate(lines, start=1):
-            stripped = line.lstrip()
-
             # Detecta início de step com run multiline
             if re.compile(
                 r"^\s*(?:-\s*)?(?:run|args)\s*:\s*(?:[|>]-?|\[\s*'-c'\s*,\s*\|)",
@@ -116,7 +91,6 @@ class CICDValidator:
                 continue
 
             if in_run_step:
-                curr_indent = len(line) - len(line.lstrip())
                 if multiline_active and len(line) - len(line.lstrip()) <= run_indent and line.lstrip():
                     in_run_step = False
                     multiline_active = False

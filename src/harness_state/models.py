@@ -1,10 +1,34 @@
 """Módulos de dados e esquemas para State Tracking na plataforma SDD."""
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+
+@dataclass(slots=True)
+class CICDViolation:
+    """Representa uma violação de integridade em arquivo de CI/CD."""
+
+    file_path: Path
+    line_number: int
+    col_number: int
+    code: str
+    message: str
+
+    def format_output(self) -> str:
+        """Formata a violação no padrão consumível por format_feedback.sh.
+
+        Returns:
+            String no formato 'arquivo:linha:coluna: CODIGO mensagem'.
+        """
+        return (
+            f"{self.file_path}:{self.line_number}:{self.col_number}: "
+            f"{self.code} {self.message}"
+        )
 
 
 class TaskState(StrEnum):

@@ -11,12 +11,12 @@ Verifica regras que o ``ruff`` nao cobre:
   ``str`` fica de fora de proposito, por causa do padrao ``class C(str, Enum)``.
 * ``PYF003``: ``raise TypeError`` dentro de operador aritmetico ou de
   comparacao, que deveria retornar ``NotImplemented``.
-* ``PYF004``: argumentos padrão mutáveis (list, dict, set) sao proibidos.
+* ``PYF004``: argumentos padrao mutaveis (list, dict, set) sao proibidos.
 * ``PYF005``: blocos try...except aninhados sao proibidos.
-* ``PYF006``: é proibido envolver imports em blocos try...except.
-* ``PYF007``: prefixo '_' é estritamente proibido fora de classes.
+* ``PYF006``: e proibido envolver imports em blocos try...except.
+* ``PYF007``: prefixo '_' e estritamente proibido fora de classes.
 
-A saída segue o formato do ``ruff`` (``arquivo:linha:coluna: CODIGO mensagem``)
+A saida segue o formato do ``ruff`` (``arquivo:linha:coluna: CODIGO mensagem``)
 para ser interpretada pelo ``format_feedback.sh``.
 """
 
@@ -37,6 +37,7 @@ ARITHMETIC_NAMES = (
     "mod",
     "divmod",
     "matmul",
+    "pow",
     "and",
     "or",
     "xor",
@@ -89,6 +90,45 @@ def is_wraps_decorator(decorator: ast.expr) -> bool:
     return False
 
 
+def has_function_ancestor(parent_map: dict[ast.AST, ast.AST], node: ast.AST) -> bool:
+    """Indica se o no esta aninhado (transitivamente) dentro de uma funcao.
+
+    Args:
+        parent_map: Mapa filho -> pai construido sobre a arvore AST.
+        node: No de AST a partir do qual subir a arvore.
+
+    Returns:
+        True quando algum ancestral e FunctionDef ou AsyncFunctionDef.
+    """
+    current = parent_map.get(node)
+    while current is not None:
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return True
+        current = parent_map.get(current)
+    return False
+
+
+def pyf007_violation(line: int, col_offset: int) -> Violation:
+    """Constrói a violação PYF007 (prefixo '_' fora de classe).
+
+    Args:
+        line: Linha da definição infratora (a partir de 1).
+        col_offset: Coluna base zero do nó infrator.
+
+    Returns:
+        Violation pronta para ser anexada à lista de resultados.
+    """
+    return Violation(
+        rule="PYF007",
+        line=line,
+        column=col_offset + 1,
+        message=(
+            "Prefixo '_' e reservado para membros privados de classe. "
+            "Remova o underscore ou mova para dentro de uma classe."
+        ),
+    )
+
+
 def check_source(source: str) -> list[Violation]:
     """Verifica um trecho de codigo fonte contra as regras do sensor AST.
 
@@ -113,34 +153,38 @@ def check_source(source: str) -> list[Violation]:
     violations: list[Violation] = []
 
     # Add parent references to nodes for context-aware checks
+    # Use a dict to track parent relationships since AST nodes are immutable
+    parent_map: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
-            child.parent = node
+            parent_map[child] = node
 
     for node in ast.walk(tree):
-        # PYF001: nested function definitions
+        # PYF001: nested function definitions — filhos DIRETOS apenas, para nao
+        # duplicar violacoes de netos (que sao checados quando o pai e visitado).
+        # A excecao de functools.wraps cobre apenas o wrapper de um decorador de
+        # nivel de modulo; wrapper dentro de decorador aninhado (factory) tambem
+        # viola — o padrao prescrito e classe com __call__.
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for child in ast.walk(node):
-                if child is node:
+            for child in node.body:
+                if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # Check if it's a functools.wraps wrapper
-                    for dec in child.decorator_list:
-                        if is_wraps_decorator(dec):
-                            break
-                    else:
-                        violations.append(
-                            Violation(
-                                rule="PYF001",
-                                line=child.lineno,
-                                column=child.col_offset + 1,
-                                message=(
-                                    "Funcao definida dentro de outra funcao. "
-                                    "Use functools.wraps para decoradores ou extraia para o nivel do modulo."
-                                ),
-                            )
-                        )
-                        break
+                is_wraps_wrapper = any(
+                    is_wraps_decorator(dec) for dec in child.decorator_list
+                )
+                if is_wraps_wrapper and not has_function_ancestor(parent_map, node):
+                    continue
+                violations.append(
+                    Violation(
+                        rule="PYF001",
+                        line=child.lineno,
+                        column=child.col_offset + 1,
+                        message=(
+                            "Funcao definida dentro de outra funcao. "
+                            "Use functools.wraps para decoradores ou extraia para o nivel do modulo."
+                        ),
+                    )
+                )
 
         # PYF002: subclassing builtin containers
         if isinstance(node, ast.ClassDef):
@@ -164,22 +208,24 @@ def check_source(source: str) -> list[Violation]:
             for base_name in OPERATOR_DUNDERS:
                 if node.name == base_name:
                     for child in ast.walk(node):
-                        if isinstance(child, ast.Raise) and isinstance(
-                            child.exc, ast.Call
-                        ) and isinstance(child.exc.func, ast.Name):
-                            if child.exc.func.id == "TypeError":
-                                violations.append(
-                                    Violation(
-                                        rule="PYF003",
-                                        line=child.lineno,
-                                        column=child.col_offset + 1,
-                                        message=(
-                                            "Levantar TypeError em operador impede "
-                                            "o operador reflexo; retorne NotImplemented."
-                                        ),
-                                    )
+                        if (
+                            isinstance(child, ast.Raise)
+                            and isinstance(child.exc, ast.Call)
+                            and isinstance(child.exc.func, ast.Name)
+                            and child.exc.func.id == "TypeError"
+                        ):
+                            violations.append(
+                                Violation(
+                                    rule="PYF003",
+                                    line=child.lineno,
+                                    column=child.col_offset + 1,
+                                    message=(
+                                        "Levantar TypeError em operador impede "
+                                        "o operador reflexo; retorne NotImplemented."
+                                    ),
                                 )
-                                break
+                            )
+                            break
 
         # PYF004: mutable default arguments
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -216,67 +262,97 @@ def check_source(source: str) -> list[Violation]:
                     )
                     break
 
-        # PYF006: try-except wrapping import
+        # PYF006: try-except wrapping import — cobre body do try, handlers,
+        # orelse e finalbody: o import esta "dentro" do try-except em qualquer
+        # dessas posicoes.
         if isinstance(node, ast.Try):
-            for handler in node.handlers:
-                for stmt in handler.body:
-                    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
-                        violations.append(
-                            Violation(
-                                rule="PYF006",
-                                line=stmt.lineno,
-                                column=stmt.col_offset + 1,
-                                message=(
-                                    "Imports dentro de try-except sao proibidos. "
-                                    "Use importlib.util.find_spec para imports condicionais."
-                                ),
-                            )
-                        )
-                        break
-
-        # PYF007: leading underscore outside class
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.AnnAssign, ast.Assign)):
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                target_name = node.target.id
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                target_name = node.name
-            elif isinstance(node, ast.Assign):
-                # Handle simple assignments like _var = value
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        target_name = target.id
-                        if target_name.startswith("_"):
-                            parent = getattr(node, "parent", None)
-                            if not isinstance(parent, ast.ClassDef):
-                                violations.append(
-                                    Violation(
-                                        rule="PYF007",
-                                        line=node.lineno,
-                                        column=node.col_offset + 1,
-                                        message=(
-                                            "Prefixo '_' e reservado para membros privados de classe. "
-                                            "Remova o underscore ou mova para dentro de uma classe."
-                                        ),
-                                    )
-                                )
-                else:
-                    target_name = None
-            if target_name and target_name.startswith("_"):
-                parent = getattr(node, "parent", None)
-                if not isinstance(parent, ast.ClassDef):
+            try_body_stmts = [
+                *node.body,
+                *(stmt for handler in node.handlers for stmt in handler.body),
+                *node.orelse,
+                *node.finalbody,
+            ]
+            for stmt in try_body_stmts:
+                if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                     violations.append(
                         Violation(
-                            rule="PYF007",
-                            line=node.lineno,
-                            column=node.col_offset + 1,
+                            rule="PYF006",
+                            line=stmt.lineno,
+                            column=stmt.col_offset + 1,
                             message=(
-                                "Prefixo '_' e reservado para membros privados de classe. "
-                                "Remova o underscore ou mova para dentro de uma classe."
+                                "Imports dentro de try-except sao proibidos. "
+                                "Use importlib.util.find_spec para imports condicionais."
                             ),
                         )
                     )
+                    break
+
+        # PYF007: leading underscore outside class — o prefixo '_' e reservado
+        # para membros privados no interior de classes. Aplica-se a funcoes,
+        # anotacoes simples e cada Name target de Assign (atributos como
+        # self._x chegam aqui como ast.Attribute e, portanto, nao sao targets).
+        parent = parent_map.get(node)
+        in_class = isinstance(parent, ast.ClassDef)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("_") and not in_class:
+                violations.append(pyf007_violation(node.lineno, node.col_offset))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id.startswith("_") and not in_class:
+                violations.append(pyf007_violation(node.lineno, node.col_offset))
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id.startswith("_")
+                    and not in_class
+                ):
+                    violations.append(pyf007_violation(node.lineno, node.col_offset))
 
     return violations
+
+
+def check_file(path: Path) -> list[Violation]:
+    """Verifica um arquivo Python, convertendo erro de sintaxe em violacao.
+
+    Args:
+        path: Caminho do arquivo.
+
+    Returns:
+        Lista de violacoes encontradas no arquivo.
+    """
+    try:
+        return check_source(path.read_text(encoding="utf-8"))
+    except SyntaxError as error:
+        line = error.lineno or 1
+        column = error.offset or 1
+        return [Violation("PYF000", line, column, f"Syntax error: {error.msg}")]
+    except (OSError, UnicodeDecodeError):
+        return []
+
+
+def collect_paths(targets: Sequence[str]) -> list[Path]:
+    """Coleta caminhos de arquivos .py a partir de arquivos e diretorios.
+
+    Args:
+        targets: Lista de caminhos para arquivos ou diretorios.
+
+    Returns:
+        Lista ordenada de caminhos para arquivos Python.
+    """
+    resolved: list[Path] = []
+    for item in targets:
+        path = Path(item)
+        if path.is_file() and path.suffix == ".py":
+            resolved.append(path)
+        elif path.is_dir():
+            resolved.extend(
+                sorted(
+                    file_path
+                    for file_path in path.rglob("*.py")
+                    if not any(part.startswith(".") for part in file_path.parts)
+                )
+            )
+    return resolved
 
 
 class AstSensor:
@@ -290,26 +366,11 @@ class AstSensor:
         self.violations = []
         for path in paths:
             if path.is_file() and path.suffix == ".py":
-                self._check_file(path)
+                self.violations.extend(check_file(path))
             elif path.is_dir():
                 for py_file in path.rglob("*.py"):
-                    self._check_file(py_file)
+                    self.violations.extend(check_file(py_file))
         return self.violations
-
-    def _check_file(self, file_path: Path) -> None:
-        try:
-            source = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return
-
-        violations = check_source(source)
-        for v in violations:
-            v.file_path = str(v.file_path) if hasattr(v, 'file_path') else str(path)
-            v.line = v.line
-            v.column = v.column
-            v.message = v.message
-            v.rule = v.rule
-            self.violations.append(v)
 
     def __len__(self) -> int:
         return len(self.violations)
@@ -321,17 +382,27 @@ class AstSensor:
         return f"AstSensor(violations_count={len(self.violations)})"
 
 
-def main(args: list[str]) -> int:
-    """Ponto de entrada CLI para o sensor AST."""
-    if not args:
-        print("Uso: ast_sensor <arquivo.py> [arquivo2.py ...]", file=sys.stderr)
-        return 1
+def main(args: Sequence[str] | None = None) -> int:
+    """Executa o sensor sobre arquivos e imprime violacoes no formato do ruff.
 
-    sensor = AstSensor()
-    paths = [Path(arg) for arg in args]
-    violations = sensor.run(paths)
+    Args:
+        args: Caminhos dos arquivos ou diretorios. Usa ``sys.argv[1:]`` se omitido.
 
-    for v in violations:
-        print(f"{v.file_path}:{v.line}:{v.column}: {v.rule} {v.message}")
+    Returns:
+        0 quando nao ha violacoes e 1 caso contrario.
+    """
+    targets = sys.argv[1:] if args is None else args
+    paths = collect_paths(targets)
+    found = False
+    for path in paths:
+        for violation in check_file(path):
+            found = True
+            print(
+                f"{path}:{violation.line}:{violation.column}: "
+                f"{violation.rule} {violation.message}"
+            )
+    return 1 if found else 0
 
-    return 1 if violations else 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

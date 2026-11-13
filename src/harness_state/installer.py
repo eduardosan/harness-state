@@ -1,7 +1,6 @@
 """Instalador do catálogo unificado de Harnesses (`harness init`) por linguagem."""
 
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -368,7 +367,7 @@ def install_module_harness(
     install_agent_guidelines(resolved_root)
 
     if with_superpowers:
-        from flywheel.superpowers import install_superpowers_from_upstream
+        from harness_state.superpowers import install_superpowers_from_upstream
 
         installed_skills.extend(
             install_superpowers_from_upstream(project_root=resolved_root)
