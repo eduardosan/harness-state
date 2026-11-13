@@ -52,7 +52,6 @@ jobs:
   guidelines-eval:
     name: "Autoavaliação Python Fluente + Diretrizes (DeepEval)"
     uses: ./.github/workflows/spec-ci.yml
-    with: {}
     secrets: inherit
 
   evaluate-tag-release:
