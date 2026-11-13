@@ -42,7 +42,7 @@ FUNC_STAGE_ELIDED_MARKER = "... [linhas elididas] ..."
 
 # Tiers de recursos do LLM-as-a-Judge (hierarquia canonica):
 # - Tier 1 (primario): env canônica `LLM_JUDGE_MODEL` (var do servidor).
-# - Tier 2 (fallback): env `LLM_DEFAULT_MODEL` (config do servidor), acionada
+# - Tier 2 (fallback): env `LLM_JUDGE_FALLBACK_MODEL`, acionada
 #   quando os recursos do tier 1 se esgotarem (cota, lock ou falha HTTP).
 # As constantes abaixo sao apenas ultimo recurso para ambientes sem config.
 JUDGE_DEFAULT_MODEL = "opencode/glm-5.3-flash-free"
@@ -111,11 +111,11 @@ def resolve_fallback_judge_model() -> str:
     """Resolve o modelo de fallback do juiz (tier 2) pela config do servidor.
 
     O tier 2 deriva da var canônica `LLM_JUDGE_FALLBACK_MODEL` (GitHub) ou do
-    `env JUDGE_FALLBACK_MODEL`; na ausência delas usa `LLM_DEFAULT_MODEL`
-    (config do servidor) e, por último, a constante de recurso.
+    `env JUDGE_FALLBACK_MODEL`; na ausência delas, cai na constante de recurso
+    do ecossistema. `LLM_DEFAULT_MODEL` NÃO entra nesta cadeia: é o default dos
+    AGENTES (ex.: id do OpenCode), não um modelo do endpoint do juiz.
 
-    Ordem: `LLM_JUDGE_FALLBACK_MODEL` > `JUDGE_FALLBACK_MODEL` >
-    `LLM_DEFAULT_MODEL` > padrao.
+    Ordem: `LLM_JUDGE_FALLBACK_MODEL` > `JUDGE_FALLBACK_MODEL` > constante.
 
     Returns:
         Identificador do modelo de fallback do juiz.
@@ -123,7 +123,6 @@ def resolve_fallback_judge_model() -> str:
     return (
         os.environ.get("LLM_JUDGE_FALLBACK_MODEL", "")
         or os.environ.get("JUDGE_FALLBACK_MODEL", "")
-        or os.environ.get("LLM_DEFAULT_MODEL", "")
         or JUDGE_FALLBACK_MODEL
     )
 
@@ -909,7 +908,7 @@ def evaluate_spec_diff(
     O tier primario do juiz e o modelo declarado na config do servidor do
     harness (`LLM_JUDGE_MODEL`). Quando os recursos desse tier se
     esgotarem (cota, lock ou falha HTTP), a avaliacao e reexecutada no tier
-    de fallback declarado na config do servidor (`LLM_DEFAULT_MODEL`).
+    de fallback canônica (`LLM_JUDGE_FALLBACK_MODEL`).
 
     Args:
         spec_path: Caminho para o arquivo markdown da especificacao.
