@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Hook pre-commit do Harness: Bloqueio estrito de arquivos e dados de configuracao no git (12-Factor)
+# e verificacao de complexidade cognitiva Python com complexipy.
+set -eo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+echo "🛡️  [Harness Guard] Verificando higiene de configuração e proteção 12-Factor..."
+
+# 1. Checagem rápida de arquivos staged no Git (ignorando deleções)
+FORBIDDEN_STAGED=$(git diff --cached --name-only --diff-filter=d 2>/dev/null | grep -E '(^|/)(\.env.*|\.env|.*\.env|config\.ya?ml|config\.json|\.harness/config\.ya?ml)$' || true)
+
+if [[ -n "$FORBIDDEN_STAGED" ]]; then
+  echo ""
+  echo "❌ [CFG001] ERRO: Tentativa de commit de arquivos de configuração proibidos:"
+  echo "$FORBIDDEN_STAGED"
+  echo ""
+  echo "👉 Regra 12-Factor & GitOps: Arquivos de configuração não devem ser comitados."
+  echo "   Todas as configurações operacionais devem ser providas exclusivamente via variáveis de ambiente."
+  echo "   Execute 'git rm --cached <arquivo>' e adicione ao .gitignore antes de continuar."
+  exit 1
+fi
+
+UV_BIN=""
+if command -v uv >/dev/null 2>&1; then
+  UV_BIN="uv"
+elif [[ -x ".venv/bin/uv" ]]; then
+  UV_BIN=".venv/bin/uv"
+fi
+
+# 2. Execucao do sensor deterministico de configuracao do Flywheel
+if [[ -n "$UV_BIN" ]]; then
+  if [[ -f ".harness/sensors/config_sensor.py" ]]; then
+    if ! "$UV_BIN" run python .harness/sensors/config_sensor.py .; then
+      echo ""
+      echo "❌ [CFG002/CFG003/CFG004] O sensor de configuração encontrou violações de hosts/IPs ou segredos hardcoded."
+      echo "   Remova os dados sensíveis/corporativos e use variáveis de ambiente."
+      exit 1
+    fi
+  elif [[ -f "src/flywheel/sensors/config_sensor.py" ]]; then
+    if ! "$UV_BIN" run python src/flywheel/sensors/config_sensor.py .; then
+      echo ""
+      echo "❌ [CFG002/CFG003/CFG004] O sensor de configuração encontrou violações de hosts/IPs ou segredos hardcoded."
+      echo "   Remova os dados sensíveis/corporativos e use variáveis de ambiente."
+      exit 1
+    fi
+  fi
+fi
+
+echo "✓ [Harness Guard] Nenhuma configuração proibida detectada no diff."
+
+# 3. Verificacao de Complexidade Cognitiva Python com complexipy em TODO o codigo
+# (divida tecnica zero desde o inicio: nao analisa apenas o diff/arquivos staged)
+STAGED_PY_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '\.py$' || true)
+if [[ -n "$STAGED_PY_FILES" ]]; then
+  echo "🧠 [Harness Guard] Analisando complexidade cognitiva Python (complexipy) em todo o codigo..."
+  PY_ARGS=(.)
+  DIFF_FLAGS=()
+
+  if [[ -x ".venv/bin/complexipy" ]]; then
+    if ! .venv/bin/complexipy "${PY_ARGS[@]}" "${DIFF_FLAGS[@]}" --failed --suggest-refactors; then
+      echo ""
+      echo "❌ [CX001] Complexidade cognitiva excedida no commit. Aplique as sugestões de refatoração do complexipy acima."
+      exit 1
+    fi
+  elif command -v complexipy >/dev/null 2>&1; then
+    if ! complexipy "${PY_ARGS[@]}" "${DIFF_FLAGS[@]}" --failed --suggest-refactors; then
+      echo ""
+      echo "❌ [CX001] Complexidade cognitiva excedida no commit. Aplique as sugestões de refatoração do complexipy acima."
+      exit 1
+    fi
+  elif [[ -n "$UV_BIN" ]] && "$UV_BIN" run complexipy --version >/dev/null 2>&1; then
+    if ! "$UV_BIN" run complexipy "${PY_ARGS[@]}" "${DIFF_FLAGS[@]}" --failed --suggest-refactors; then
+      echo ""
+      echo "❌ [CX001] Complexidade cognitiva excedida no commit. Aplique as sugestões de refatoração do complexipy acima."
+      exit 1
+    fi
+  elif [[ -n "$UV_BIN" && -f ".harness/sensors/complexity_sensor.py" ]]; then
+    if ! "$UV_BIN" run python .harness/sensors/complexity_sensor.py "${DIFF_FLAGS[@]}" "${PY_ARGS[@]}"; then
+      echo ""
+      echo "❌ [CX001] Complexidade cognitiva excedida no commit. Aplique as sugestões de refatoração do complexipy acima."
+      exit 1
+    fi
+  elif [[ -n "$UV_BIN" && -f "src/flywheel/sensors/complexity_sensor.py" ]]; then
+    if ! "$UV_BIN" run python src/flywheel/sensors/complexity_sensor.py "${DIFF_FLAGS[@]}" "${PY_ARGS[@]}"; then
+      echo ""
+      echo "❌ [CX001] Complexidade cognitiva excedida no commit. Aplique as sugestões de refatoração do complexipy acima."
+      exit 1
+    fi
+  fi
+  echo "✓ [Harness Guard] Complexidade cognitiva aprovada pelo complexipy."
+fi
+
+exit 0

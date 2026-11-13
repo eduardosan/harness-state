@@ -416,7 +416,6 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
     write_file(path / "sensors" / "__init__.py", FLYWHEEL_SENSORS_TEMPLATE)
 
     # Workflows
-    Path(".") / ".github" / "workflows"
     ensure_dir(path / ".github" / "workflows")
     write_file(path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE)
     write_file(path / ".github" / "workflows" / "spec-dispatch.yml", FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE)

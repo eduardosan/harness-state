@@ -1,0 +1,32 @@
+# justfile - Interface canonica do harness (instalado via `harness init`).
+default:
+    @just --list
+
+# Compilacao e tipagem estatica
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f ".harness/type_baseline.json" ]]; then \
+        report=$(mktemp) && trap 'rm -f "$report"' EXIT; \
+        uv run pyright --outputjson > "$report" 2>/dev/null || true; \
+        uv run python .harness/sensors/type_baseline.py check --report "$report" --baseline .harness/type_baseline.json; \
+    else \
+        uv run pyright; \
+    fi
+
+# Sensores computacionais rapidos (estilo + fronteiras de arquitetura + AST + complexidade + 12-Factor config)
+lint:
+    uv run ruff check .
+    uv run isort --check-only .
+    if [[ -f ".harness/sensors/rules/importlinter.ini" ]]; then uv run lint-imports --config .harness/sensors/rules/importlinter.ini; fi
+    if [[ -f ".harness/sensors/ast_sensor.py" ]]; then uv run python .harness/sensors/ast_sensor.py .; fi
+    if [[ -f ".harness/sensors/complexity_sensor.py" ]]; then uv run python .harness/sensors/complexity_sensor.py .; fi
+    if [[ -f ".harness/sensors/cicd_sensor.py" ]]; then uv run python .harness/sensors/cicd_sensor.py .; fi
+    if [[ -f ".harness/sensors/config_sensor.py" ]]; then uv run python .harness/sensors/config_sensor.py .; fi
+
+# Suite de testes unitarios
+test:
+    uv run pytest tests
+
+# Validacao completa: criterio de aceitacao do diff
+verify: check lint test

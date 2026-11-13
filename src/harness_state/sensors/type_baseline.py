@@ -12,9 +12,12 @@ O baseline guarda arquivo, regra e mensagem com contagem de ocorrências, sem o
 número da linha, para que edições triviais não quebrem a comparação.
 """
 
+import argparse
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 
 DiagnosticKey = tuple[str, str, str]
@@ -23,7 +26,7 @@ DEFAULT_BASELINE_PATH = Path("pyright-baseline.json")
 
 
 @dataclass(frozen=True)
-class TypeBaselineViolation:
+class Diagnostic:
     """Erro de tipo reportado pelo pyright.
 
     Attributes:
@@ -51,7 +54,7 @@ class TypeBaselineViolation:
 
 
 @dataclass(frozen=True)
-class TypeBaselineComparison:
+class Comparison:
     """Resultado da comparação entre o relatório atual e o baseline.
 
     Attributes:
@@ -59,156 +62,150 @@ class TypeBaselineComparison:
         fixed: Quantidade de erros do baseline que não ocorrem mais.
     """
 
-    new: list[TypeBaselineViolation]
+    new: list[Diagnostic]
     fixed: int
 
 
-class TypeBaselineSensor:
-    """Sensor de baseline de erros do pyright."""
+def relative_path(file: str, root: Path) -> str:
+    """Converte um caminho para relativo à raiz, quando possível."""
+    path = Path(file)
+    if path.is_relative_to(root):
+        return path.relative_to(root).as_posix()
+    return path.as_posix()
 
-    def __init__(
-        self,
-        baseline_path: Path = DEFAULT_BASELINE_PATH,
-        root_dir: Path | None = None,
-    ) -> None:
-        """Inicializa o sensor.
 
-        Args:
-            baseline_path: Caminho do arquivo baseline versionado.
-            root_dir: Raiz do repositório (padrão: cwd).
-        """
-        self.baseline_path = baseline_path.resolve()
-        self.root_dir = (root_dir or Path.cwd()).resolve()
+def parse_report(report: str, root: Path) -> list[Diagnostic]:
+    """Extrai os erros de um relatório ``pyright --outputjson``.
 
-    def load_baseline(self) -> Counter[DiagnosticKey]:
-        """Carrega o baseline versionado.
+    Args:
+        report: Texto JSON do relatório.
+        root: Raiz do repositório, usada para relativizar caminhos.
 
-        Returns:
-            Counter com chaves (arquivo, regra, mensagem) e contagens.
-        """
-        if not self.baseline_path.is_file():
-            return Counter()
-
-        try:
-            data = json.loads(self.baseline_path.read_text(encoding="utf-8"))
-            baseline = Counter()
-            for entry in data.get("diagnostics", []):
-                key = (entry["file"], entry["rule"], entry["message"])
-                baseline[key] = entry.get("count", 1)
-            return baseline
-        except (json.JSONDecodeError, OSError, KeyError):
-            return Counter()
-
-    def run_pyright(self) -> list[TypeBaselineViolation]:
-        """Executa pyright e retorna lista de diagnósticos.
-
-        Returns:
-            Lista de violações de tipo encontradas.
-        """
-        import subprocess
-
-        try:
-            result = subprocess.run(
-                ["pyright", "--outputjson"],
-                cwd=self.root_dir,
-                capture_output=True,
-                text=True,
-                check=False,
+    Returns:
+        Apenas diagnósticos de severidade ``error``, com linhas base 1.
+    """
+    data = json.loads(report)
+    diagnostics: list[Diagnostic] = []
+    for item in data.get("generalDiagnostics", []):
+        if item.get("severity") != "error":
+            continue
+        start = item.get("range", {}).get("start", {})
+        diagnostics.append(
+            Diagnostic(
+                file=relative_path(item.get("file", ""), root),
+                line=start.get("line", 0) + 1,
+                column=start.get("character", 0) + 1,
+                rule=item.get("rule", ""),
+                message=item.get("message", ""),
             )
-        except (subprocess.SubprocessError, OSError):
-            return []
+        )
+    return diagnostics
 
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            return []
 
-        violations = []
-        for diag in data.get("generalDiagnostics", []):
-            file_rel = self._relative_path(diag.get("file", ""))
-            violations.append(
-                TypeBaselineViolation(
-                    file=file_rel,
-                    line=diag.get("range", {}).get("start", {}).get("line", 0) + 1,
-                    column=diag.get("range", {}).get("start", {}).get("character", 0) + 1,
-                    rule=diag.get("rule", ""),
-                    message=diag.get("message", ""),
-                )
+def expand(counts: Counter[DiagnosticKey]) -> list[Diagnostic]:
+    """Converte contagens do baseline em diagnósticos sem posição."""
+    result: list[Diagnostic] = []
+    for (file, rule, message), count in sorted(counts.items()):
+        result.extend([Diagnostic(file, 0, 0, rule, message)] * count)
+    return result
+
+
+def save_baseline(path: Path, diagnostics: Sequence[Diagnostic]) -> None:
+    """Grava o baseline de forma determinística.
+
+    Args:
+        path: Arquivo de baseline.
+        diagnostics: Erros a registrar.
+    """
+    counts = Counter(item.key for item in diagnostics)
+    entries = [
+        {"file": file, "rule": rule, "message": message, "count": count}
+        for (file, rule, message), count in sorted(counts.items())
+    ]
+    text = json.dumps(entries, indent=2, ensure_ascii=False)
+    path.write_text(text + "\n", encoding="utf-8")
+
+
+def load_baseline(path: Path) -> list[Diagnostic]:
+    """Lê o baseline; arquivo ausente equivale a baseline vazio."""
+    if not path.is_file():
+        return []
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    counts: Counter[DiagnosticKey] = Counter()
+    for entry in entries:
+        key = (entry["file"], entry["rule"], entry["message"])
+        counts[key] += entry.get("count", 1)
+    return expand(counts)
+
+
+def compare(
+    current: Sequence[Diagnostic], baseline: Sequence[Diagnostic]
+) -> Comparison:
+    """Separa erros novos dos já conhecidos e conta os corrigidos."""
+    budget = Counter(item.key for item in baseline)
+    new: list[Diagnostic] = []
+    for item in sorted(current, key=attrgetter("file", "line", "column")):
+        if budget[item.key] > 0:
+            budget[item.key] -= 1
+        else:
+            new.append(item)
+    diff = Counter(i.key for i in baseline) - Counter(i.key for i in current)
+    fixed = sum(diff.values())
+    return Comparison(new=new, fixed=fixed)
+
+
+def shrink(
+    baseline: Sequence[Diagnostic], current: Sequence[Diagnostic]
+) -> list[Diagnostic]:
+    """Remove do baseline os erros corrigidos, sem nunca adicionar novos."""
+    remaining = Counter(i.key for i in baseline) & Counter(i.key for i in current)
+    return expand(remaining)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Cria o parser de linha de comando."""
+    parser = argparse.ArgumentParser(description="Baseline de erros do pyright.")
+    parser.add_argument("command", choices=["generate", "check", "shrink"])
+    parser.add_argument("--report", required=True, type=Path)
+    parser.add_argument("--baseline", required=True, type=Path)
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    return parser
+
+
+def format_diagnostic(item: Diagnostic) -> str:
+    """Formata um erro como o pyright, para o ``format_feedback.sh``."""
+    location = f"{item.file}:{item.line}:{item.column}"
+    return f"{location} - error: {item.message} ({item.rule})"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Executa um subcomando do baseline."""
+    args = build_parser().parse_args(argv)
+    current = parse_report(args.report.read_text(encoding="utf-8"), args.root)
+    baseline = load_baseline(args.baseline)
+
+    if args.command == "generate":
+        if args.baseline.exists():
+            print(
+                f"Baseline {args.baseline} already exists. "
+                "Use 'shrink' to remove fixed errors; it can never grow."
             )
-        return violations
+            return 2
+        save_baseline(args.baseline, current)
+        return 0
 
-    def _relative_path(self, file: str) -> str:
-        path = Path(file)
-        if path.is_relative_to(self.root_dir):
-            return path.relative_to(self.root_dir).as_posix()
-        return path.as_posix()
+    if args.command == "shrink":
+        save_baseline(args.baseline, shrink(baseline, current))
+        return 0
 
-    def check(self) -> tuple[list[TypeBaselineViolation], int]:
-        """Compara execução atual com baseline.
+    result = compare(current, baseline)
+    for item in result.new:
+        print(format_diagnostic(item))
+    return 1 if result.new else 0
 
-        Returns:
-            Tupla (novos_erros, erros_corrigidos).
-        """
-        baseline = self.load_baseline()
-        current = self.run_pyright()
 
-        current_counter = Counter(v.key for v in current)
+if __name__ == "__main__":
+    raise SystemExit(main())
 
-        new_violations = []
-        for v in current:
-            allowed = baseline.get(v.key, 0)
-            if current_counter[v.key] > allowed:
-                new_violations.append(v)
 
-        fixed = sum(max(0, baseline[k] - current_counter.get(k, 0)) for k in baseline)
-
-        return new_violations, fixed
-
-    def generate_baseline(self, force: bool = False) -> None:
-        """Gera baseline inicial a partir da execução atual.
-
-        Args:
-            force: Se False, recusa sobrescrever baseline existente.
-        """
-        if self.baseline_path.is_file() and not force:
-            raise RuntimeError(
-                f"Baseline já existe em {self.baseline_path}. Use --force para sobrescrever."
-            )
-
-        violations = self.run_pyright()
-        counter = Counter(v.key for v in violations)
-
-        data = {
-            "version": 1,
-            "diagnostics": [
-                {"file": f, "rule": r, "message": m, "count": c}
-                for (f, r, m), c in counter.items()
-            ],
-        }
-
-        self.baseline_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-    def shrink_baseline(self) -> int:
-        """Encolhe o baseline removendo entradas que não ocorrem mais.
-
-        Returns:
-            Quantidade de entradas removidas.
-        """
-        baseline = self.load_baseline()
-        current = self.run_pyright()
-        current_counter = Counter(v.key for v in current)
-
-        keys_to_remove = [k for k in baseline if k not in current_counter]
-        for k in keys_to_remove:
-            del baseline[k]
-
-        data = {
-            "version": 1,
-            "diagnostics": [
-                {"file": f, "rule": r, "message": m, "count": c}
-                for (f, r, m), c in baseline.items()
-            ],
-        }
-
-        self.baseline_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        return len(keys_to_remove)
+TypeBaselineViolation = Diagnostic

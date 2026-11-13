@@ -1,0 +1,14 @@
+# justfile - Interface canonica TypeScript do harness (instalado via `harness init`).
+default:
+    @just --list
+
+check:
+    npm run build
+
+lint:
+    npm run lint
+
+test:
+    npm run test -- --run
+
+verify: check lint test

@@ -1,0 +1,14 @@
+# justfile - Interface canonica Go do harness (instalado via `harness init`).
+default:
+    @just --list
+
+check:
+    go vet ./...
+
+lint:
+    gofmt -l .
+
+test:
+    go test ./...
+
+verify: check lint test
