@@ -14,6 +14,10 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.7.0",
     "pyyaml>=6.0.3",
+    "complexipy>=8.2.0",
+    "pyright>=1.1.350",
+    "jsonschema>=4.20.0",
+    "tomli-w>=1.0.0",
 ]
 
 [project.scripts]
