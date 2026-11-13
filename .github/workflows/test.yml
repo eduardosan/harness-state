@@ -30,6 +30,13 @@ jobs:
       - name: Tipagem estática (pyright)
         run: uv run pyright src tests
 
+      - name: "Sensores determinísticos de AST (Python Fluente, PYF001-PYF007)"
+        run: |
+          # Gate de estilo cognitivo no PR, como no pipeline do flywheel
+          # (job 'Testes Unitários & Sensores AST'). Escopo src/ apenas:
+          # o canônico não varre testes (fixtures usam closures de teste).
+          uv run python -m harness_state.sensors.ast_sensor src/harness_state/
+
       - name: Testes unitários
         run: uv run pytest tests --no-header -q
 

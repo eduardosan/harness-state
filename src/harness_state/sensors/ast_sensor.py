@@ -123,6 +123,34 @@ def has_function_ancestor(parent_map: dict[ast.AST, ast.AST], node: ast.AST) -> 
     return False
 
 
+def is_dunder_name(name: str) -> bool:
+    """Indica se o nome segue o convenio dunder ('__x__') de protocolo Python.
+
+    Args:
+        name: Nome de identificador a classificar.
+
+    Returns:
+        True para nomes cercados por duplos underscores (ex: ``__all__``).
+    """
+    return name.startswith("__") and name.endswith("__")
+
+
+def private_prefixed(name: str) -> bool:
+    """Indica se o nome usa o prefixo privado '_' alvo da regra PYF007.
+
+    Convenções dunder (``__all__``, ``__getattr__``) sao protocolos de
+    linguagem e ficam de fora: o alvo e o prefixo reservado a membros
+    privados de classe usado fora de classes.
+
+    Args:
+        name: Nome de identificador a classificar.
+
+    Returns:
+        True quando inicia com '_' sem ser dunder.
+    """
+    return name.startswith("_") and not is_dunder_name(name)
+
+
 def pyf007_violation(line: int, col_offset: int) -> Violation:
     """Constrói a violação PYF007 (prefixo '_' fora de classe).
 
@@ -297,24 +325,31 @@ def check_source(source: str) -> list[Violation]:
                     )
                     break
 
-        # PYF007: leading underscore outside class — o prefixo '_' e reservado
-        # para membros privados no interior de classes. Aplica-se a funcoes,
-        # anotacoes simples e cada Name target de Assign (atributos como
-        # self._x chegam aqui como ast.Attribute e, portanto, nao sao targets).
+        # PYF007: leading underscore outside class — paridade com o sensor
+        # canônico do flywheel: nomes dunder ('__x__') sao protocolo, nao
+        # prefixo privado; Assign/AnnAssign so contam em escopo de modulo
+        # (guard `class_depth == 0 and not function_stack` do original).
+        # Atributos como self._x chegam como ast.Attribute e nao sao targets.
         parent = parent_map.get(node)
         in_class = isinstance(parent, ast.ClassDef)
+        in_function = has_function_ancestor(parent_map, node)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("_") and not in_class:
+            if private_prefixed(node.name) and not in_class:
                 violations.append(pyf007_violation(node.lineno, node.col_offset))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if node.target.id.startswith("_") and not in_class:
+            if (
+                private_prefixed(node.target.id)
+                and not in_class
+                and not in_function
+            ):
                 violations.append(pyf007_violation(node.lineno, node.col_offset))
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if (
                     isinstance(target, ast.Name)
-                    and target.id.startswith("_")
+                    and private_prefixed(target.id)
                     and not in_class
+                    and not in_function
                 ):
                     violations.append(pyf007_violation(node.lineno, node.col_offset))
 
