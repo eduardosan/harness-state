@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 OPENCODE_PROVIDER = "opencode"
 DEFAULT_OPENCODE_MODEL = f"{OPENCODE_PROVIDER}/glm-5.3-flash-free"
 

@@ -12,12 +12,9 @@ O baseline guarda arquivo, regra e mensagem com contagem de ocorrências, sem o
 número da linha, para que edições triviais não quebrem a comparação.
 """
 
-import argparse
 import json
 from collections import Counter
-from collections.abc import Sequence
 from dataclasses import dataclass
-from operator import attrgetter
 from pathlib import Path
 
 DiagnosticKey = tuple[str, str, str]

@@ -7,9 +7,8 @@ formatando-as em linhas prescritivas (`arquivo:linha:coluna: CODIGO mensagem`)
 compatíveis com o `format_feedback.sh` para alimentar diretamente os agentes LLM.
 """
 
-import argparse
 import importlib.util
-import sys
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +33,7 @@ IGNORED_DIRS = frozenset(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ComplexityViolation:
     """Violação de complexidade cognitiva enriquecida com sugestões do complexipy.
 
@@ -98,7 +97,7 @@ class ComplexitySensor:
         self.max_complexity = max_complexity
         self.ignored_dirs = ignored_dirs or IGNORED_DIRS
 
-    def run(self, paths: Sequence[Path]) -> list[dataclass]:
+    def run(self, paths: Sequence[Path]) -> list[ComplexityViolation]:
         """Executa o sensor sobre os caminhos fornecidos.
 
         Args:
@@ -133,7 +132,6 @@ class ComplexitySensor:
     def _analyze_file(self, file_path: Path) -> list:
         """Analisa um único arquivo Python."""
         try:
-            import subprocess
             import json
 
             result = subprocess.run(

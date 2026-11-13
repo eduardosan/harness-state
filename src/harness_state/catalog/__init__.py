@@ -173,7 +173,7 @@ class ProjectCatalog:
 
 
 # Catálogo de agentes (definições)
-from ..agents import AgentConfig, KNOWN_AGENTS
+from ..agents import KNOWN_AGENTS
 
 
 class AgentCatalog:

@@ -14,8 +14,6 @@ para consumo direto pelo format_feedback.sh e verificação canônica just verif
 import fnmatch
 import os
 import re
-import struct
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -154,17 +152,16 @@ class ConfigSensor:
 
     def _find_scannable_files(self) -> list[Path]:
         """Localiza todos os arquivos escaneáveis no projeto."""
-        files = []
-        for root, dirs, files in os.walk(self.root_dir):
-            # Remove diretórios ignorados in-place
+        found_files: list[Path] = []
+        for root, dirs, fnames in os.walk(self.root_dir):
             dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
 
             root_path = Path(root)
-            for file in files:
+            for file in fnames:
                 file_path = root_path / file
                 if file_path.suffix in self.scannable_extensions:
-                    files.append(file_path)
-        return files
+                    found_files.append(file_path)
+        return found_files
 
     def _scan_file(self, file_path: Path) -> None:
         """Escaneia um único arquivo em busca de violações."""

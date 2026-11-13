@@ -535,7 +535,6 @@ def flywheel_group() -> None:
     Comandos para inicializar, atualizar e monitorar instâncias do flywheel
     que rodam pipelines instalados via harness-state.
     """
-    pass
 
 
 @flywheel_group.command(name="init")

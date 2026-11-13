@@ -5,52 +5,49 @@ A **execução server-side** (ExecutionSensor, RunnerHealthSensor) permanece no 
 """
 
 from .complexity_sensor import (
-    ComplexityViolation,
-    ComplexitySensor,
     DEFAULT_MAX_COMPLEXITY,
     IGNORED_DIRS,
+    ComplexitySensor,
+    ComplexityViolation,
 )
-
 from .config_sensor import (
-    ConfigViolation,
-    ConfigSensor,
     FORBIDDEN_FILE_PATTERNS,
     REAL_DOMAINS_PATTERN,
     REAL_IPS_PATTERN,
     REAL_SECRET_PATTERNS,
+    ConfigSensor,
+    ConfigViolation,
 )
-
 from .prompt_sensor import (
-    PromptViolation,
-    PromptSensor,
     PROMPT_RULES,
+    PromptSensor,
+    PromptViolation,
 )
-
 from .type_baseline import (
-    TypeBaselineViolation,
-    TypeBaselineSensor,
     DEFAULT_BASELINE_PATH,
+    TypeBaselineSensor,
+    TypeBaselineViolation,
 )
 
 __all__ = [
-    # Complexity
-    "ComplexityViolation",
-    "ComplexitySensor",
+    "DEFAULT_BASELINE_PATH",
     "DEFAULT_MAX_COMPLEXITY",
-    "IGNORED_DIRS",
-    # Config
-    "ConfigViolation",
-    "ConfigSensor",
     "FORBIDDEN_FILE_PATTERNS",
+    "IGNORED_DIRS",
+    "PROMPT_RULES",
     "REAL_DOMAINS_PATTERN",
     "REAL_IPS_PATTERN",
     "REAL_SECRET_PATTERNS",
+    "ComplexitySensor",
+    # Complexity
+    "ComplexityViolation",
+    "ConfigSensor",
+    # Config
+    "ConfigViolation",
+    "PromptSensor",
     # Prompt
     "PromptViolation",
-    "PromptSensor",
-    "PROMPT_RULES",
+    "TypeBaselineSensor",
     # Type Baseline
     "TypeBaselineViolation",
-    "TypeBaselineSensor",
-    "DEFAULT_BASELINE_PATH",
 ]

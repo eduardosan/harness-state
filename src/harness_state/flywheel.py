@@ -4,20 +4,15 @@ Fornece comandos para inicializar, atualizar e monitorar instâncias do flywheel
 que rodam pipelines instalados via harness-state.
 """
 
-import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import click
 import yaml
 from rich.console import Console
-from rich.table import Table
 
 console = Console()
 
@@ -380,11 +375,8 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
         raise SystemExit(1)
 
     # Determina versões
-    harness_version = version or "0.4.0"
-    agentic_version = version or "0.1.0"
 
     # Nome do projeto baseado no path
-    name = path.name
 
     console.print(f"[bold cyan]Inicializando Flywheel em {path}...[/bold cyan]")
 
@@ -424,7 +416,7 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
     _write_file(path / "sensors" / "__init__.py", FLYWHEEL_SENSORS_TEMPLATE)
 
     # Workflows
-    workflows_dir = Path(".") / ".github" / "workflows"
+    Path(".") / ".github" / "workflows"
     _ensure_dir(path / ".github" / "workflows")
     _write_file(path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE)
     _write_file(path / ".github" / "workflows" / "spec-dispatch.yml", FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE)
@@ -465,52 +457,13 @@ harness flywheel status {path.name}
     _write_file(path / "README.md", readme_content)
 
     console.print(f"[bold green]✓[/bold green] Flywheel inicializado em {path}")
-    console.print(f"  Estrutura criada com:")
-    console.print(f"  - pyproject.toml (harness-state 0.4.0, agentic-flywheel 0.1.0)")
-    console.print(f"  - config.yaml (flywheels gerenciados)")
-    console.print(f"  - .github/workflows/ (agent.yml, spec-dispatch.yml, capabilities-sync.yml)")
-    console.print(f"  - catalog/, sensors/, agents.py (usam harness_state.*)")
-    console.print(f"  - README.md com instruções")
+    console.print("  Estrutura criada com:")
+    console.print("  - pyproject.toml (harness-state 0.4.0, agentic-flywheel 0.1.0)")
+    console.print("  - config.yaml (flywheels gerenciados)")
+    console.print("  - .github/workflows/ (agent.yml, spec-dispatch.yml, capabilities-sync.yml)")
+    console.print("  - catalog/, sensors/, agents.py (usam harness_state.*)")
+    console.print("  - README.md com instruções")
     console.print(f"\nPara atualizar: [bold white]harness flywheel update {path}[/bold white]")
-
-
-def update_flywheel(path: Path, version: str | None = None, dry_run: bool = False) -> None:
-    """Atualiza um flywheel existente."""
-    path = path.resolve()
-
-    if not path.is_dir():
-        console.print(f"[bold red]Erro:[/bold red] Diretório {path} não existe.")
-        raise SystemExit(1)
-
-    pyproject_path = path / "pyproject.toml"
-    if not pyproject_path.exists():
-        console.print(f"[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
-        raise SystemExit(1)
-
-    console.print(f"[bold cyan]Atualizando Flywheel em {path}...[/bold cyan]")
-
-    if dry_run:
-        console.print("[yellow]DRY RUN: apenas simulação[/yellow]")
-
-    # Lê pyproject.toml atual
-    import tomllib
-    with open(path / "pyproject.toml", "rb") as f:
-        pyproject = tomllib.load(f)
-
-    current_harness = pyproject.get("project", {}).get("dependencies", [])
-    harness_dep = next((d for d in current_harness if d.startswith("harness-state")), None)
-    agentic_dep = next((d for d in current_harness if d.startswith("agentic-flywheel")), None)
-
-    console.print(f"Versão atual harness-state: {harness_dep or 'não encontrado'}")
-    console.print(f"Versão atual agentic-flywheel: {agentic_dep or 'não encontrado'}")
-
-    if dry_run:
-        console.print("[yellow]DRY RUN: nenhuma alteração aplicada[/yellow]")
-        return
-
-    # Aqui faria a atualização real do pyproject.toml
-    console.print("[bold green]✓[/bold green] Flywheel atualizado (simulação)")
-    console.print("Para atualização real, implemente a lógica de bump de versão no pyproject.toml")
 
 
 def check_flywheel_status(path: Path) -> None:
@@ -523,7 +476,7 @@ def check_flywheel_status(path: Path) -> None:
 
     pyproject_path = path / "pyproject.toml"
     if not pyproject_path.exists():
-        console.print(f"[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
+        console.print("[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
         raise SystemExit(1)
 
     console.print(f"[bold cyan]Status do Flywheel: {path.name}[/bold cyan]")
@@ -540,23 +493,18 @@ def check_flywheel_status(path: Path) -> None:
 
     # Verifica imports
     console.print("\n[bold cyan]Validação de imports:[/bold cyan]")
-    try:
-        import harness_state.catalog
-        console.print("  [green]✓[/green] harness_state.catalog")
-    except ImportError as e:
-        console.print(f"  [red]✗[/red] harness_state.catalog: {e}")
+    all_ok = True
+    for module_name in ("harness_state.catalog", "harness_state.sensors", "harness_state.agents"):
+        try:
+            __import__(module_name)
+            console.print(f"  [green]✓[/green] {module_name}")
+        except ImportError as e:
+            console.print(f"  [red]✗[/red] {module_name}: {e}")
+            all_ok = False
 
-    try:
-        import harness_state.sensors
-        console.print("  [green]✓[/green] harness_state.sensors")
-    except ImportError as e:
-        console.print(f"  [red]✗[/red] harness_state.sensors: {e}")
-
-    try:
-        import harness_state.agents
-        console.print("  [green]✓[/green] harness_state.agents")
-    except ImportError as e:
-        console.print(f"  [red]✗[/red] harness_state.agents: {e}")
+    if not all_ok:
+        console.print("[bold red]Health check falhou[/bold red]")
+        raise SystemExit(1)
 
     console.print("\n[bold green]✓[/bold green] Health check concluído")
 
@@ -592,13 +540,13 @@ def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, str
     for fw in flywheels:
         name = fw.get("name", "unknown")
         path_str = fw.get("path")
-        repo = fw.get("repo", "eduardosan/agentic-flywheel")
-        branch = fw.get("branch", "main")
+        fw.get("repo", "eduardosan/agentic-flywheel")
+        fw.get("branch", "main")
         auto_release = fw.get("auto_release", True)
         release_strategy = fw.get("release_strategy", "patch")
-        commit_msg_template = fw.get("commit_message_template", "chore(flywheel): update harness-state to {{version}} [skip ci]")
-        tag_template = fw.get("tag_template", "flywheel/v{{version}}")
-        prerelease = fw.get("prerelease", False)
+        fw.get("commit_message_template", "chore(flywheel): update harness-state to {{version}} [skip ci]")
+        fw.get("tag_template", "flywheel/v{{version}}")
+        fw.get("prerelease", False)
 
         if not path_str:
             console.print(f"  [red]✗[/red] {name}: path não configurado")
@@ -624,13 +572,13 @@ def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, str
             console.print(f"  [green]✓[/green] {name}: atualização simulada")
 
             # Simula commit e release
+            new_version = "0.4.1"  # seria calculado baseado na estratégia
             if auto_release:
-                new_version = "0.4.1"  # seria calculado baseado na estratégia
                 tag = f"flywheel/v{new_version}"
                 console.print(f"  [green]✓[/green] Release: {tag} (strategy: {release_strategy})")
 
             results.append((name, True, f"updated to {new_version}"))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             console.print(f"  [red]✗[/red] {name}: {e}")
             results.append((name, False, str(e)))
 
@@ -654,7 +602,7 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     pyproject_path = path / "pyproject.toml"
     if not pyproject_path.exists():
-        console.print(f"[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
+        console.print("[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
         raise SystemExit(1)
 
     console.print(f"[bold cyan]Atualizando Flywheel em {path}...[/bold cyan]")
@@ -714,10 +662,8 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
     console.print("[bold cyan]Validando imports de harness_state.*...[/bold cyan]")
     validation_result = _run([
         sys.executable, "-c",
-        "from harness_state.catalog import ProjectCatalog, AgentCatalog, SpecCatalog; "
-        "from harness_state.sensors import ComplexitySensor, ConfigSensor, PromptSensor; "
-        "from harness_state.agents import DetectedAgent, AgentRunner, AgentConfig; "
-        "print('OK')"
+        ("from harness_state import catalog, sensors, agents; "
+        "print('OK')")
     ], cwd=path)
 
     if validation_result.returncode != 0:
