@@ -8,11 +8,12 @@ compatíveis com o `format_feedback.sh` para alimentar diretamente os agentes LL
 """
 
 import argparse
-import importlib.util
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+import complexipy
 
 DEFAULT_MAX_COMPLEXITY = 15
 
@@ -185,8 +186,10 @@ def format_plan_suggestion(plan: object) -> str:
     help_text = getattr(plan, "help", "") or getattr(plan, "explanation", "")
 
     parts = [
-        f"Complexipy suggestion [{rule_id}]: {title} "
-        f"(lines {line_start}-{line_end}, est. -{reduction} -> {after})."
+        (
+            f"Complexipy suggestion [{rule_id}]: {title} "
+            f"(lines {line_start}-{line_end}, est. -{reduction} -> {after})."
+        )
     ]
     if help_text:
         parts.append(f"Help: {help_text}")
@@ -262,11 +265,6 @@ def check_complexity_source(
     Returns:
         Lista de `ComplexityViolation` para funções que excedem `max_complexity`.
     """
-    if importlib.util.find_spec("complexipy") is None:
-        return []
-
-    import complexipy
-
     result = complexipy.code_complexity(source, with_plans=True)
     violations: list[ComplexityViolation] = []
     for func in getattr(result, "functions", []):
@@ -293,45 +291,41 @@ def resolve_relative_file_path(py_file: Path, resolved_root: Path) -> str:
         return str(py_file)
 
 
-def analyze_single_file(complexipy_mod: object, file_path: str) -> object | None:
+def analyze_single_file(file_path: str) -> complexipy.FileComplexity | None:
     """Executa `complexipy.file_complexity` com tratamento plano de falhas.
 
     Args:
-        complexipy_mod: Módulo `complexipy` carregado.
         file_path: Caminho do arquivo a ser analisado.
 
     Returns:
-        Objeto `FileComplexity` ou None se o arquivo não puder ser analisado.
+        Objeto `FileComplexity` ou None se o arquivo não puder ser
+        lido/parseado (contrato documentado do sensor: arquivo ilegível
+        não bloqueia a análise dos demais).
     """
-    file_comp_fn = getattr(complexipy_mod, "file_complexity")
     try:
-        return file_comp_fn(file_path, with_plans=True)
-    except Exception:
+        return complexipy.file_complexity(file_path, with_plans=True)
+    except ValueError:
         return None
 
 
 def analyze_files_batch(
-    complexipy_mod: object,
     py_files: Sequence[Path],
     resolved_root: Path,
-) -> tuple[list[object], dict[str, str]]:
+) -> tuple[list[complexipy.FileComplexity], dict[str, str]]:
     """Analisa todos os arquivos Python coletados com o `complexipy`.
 
     Args:
-        complexipy_mod: Módulo `complexipy` carregado.
         py_files: Sequência de caminhos de arquivos `.py`.
         resolved_root: Diretório raiz de invocação.
 
     Returns:
         Tupla `(file_results, display_path_map)`.
     """
-    file_results: list[object] = []
+    file_results: list[complexipy.FileComplexity] = []
     display_map: dict[str, str] = {}
     for py_file in py_files:
         rel_path = resolve_relative_file_path(py_file, resolved_root)
-        fc = analyze_single_file(complexipy_mod, rel_path) or analyze_single_file(
-            complexipy_mod, str(py_file)
-        )
+        fc = analyze_single_file(rel_path) or analyze_single_file(str(py_file))
         if fc is None:
             continue
         file_results.append(fc)
@@ -340,7 +334,7 @@ def analyze_files_batch(
     return file_results, display_map
 
 
-def is_diff_entry_regressed(entry: object, max_complexity: int) -> bool:
+def is_diff_entry_regressed(entry: complexipy.DiffEntry, max_complexity: int) -> bool:
     """Avalia se uma entrada do diff representa uma regressão acima do limite.
 
     Args:
@@ -350,11 +344,11 @@ def is_diff_entry_regressed(entry: object, max_complexity: int) -> bool:
     Returns:
         True se a função é nova ou aumentou sua complexidade acima do limite.
     """
-    new_c = getattr(entry, "new_complexity", None)
+    new_c = entry.new_complexity
     if new_c is None or int(new_c) <= max_complexity:
         return False
-    status_str = str(getattr(entry, "status", ""))
-    old_c = getattr(entry, "old_complexity", None)
+    status_str = str(entry.status)
+    old_c = entry.old_complexity
     return (
         "NEW" in status_str
         or "REGRESSED" in status_str
@@ -363,8 +357,7 @@ def is_diff_entry_regressed(entry: object, max_complexity: int) -> bool:
 
 
 def compute_regressed_keys(
-    complexipy_mod: object,
-    file_results: list[object],
+    file_results: list[complexipy.FileComplexity],
     diff_ref: str,
     resolved_root: Path,
     max_complexity: int,
@@ -372,23 +365,23 @@ def compute_regressed_keys(
     """Calcula o conjunto de funções novas ou regredidas no diff Git.
 
     Args:
-        complexipy_mod: Módulo `complexipy` carregado.
         file_results: Lista de objetos `FileComplexity`.
         diff_ref: Referência Git (ex: `HEAD`).
         resolved_root: Diretório raiz do repositório.
         max_complexity: Limite máximo de complexidade permitido.
 
     Returns:
-        Conjunto de tuplas `(file_path, func_name)` regredidas, ou None se falhar.
+        Conjunto de tuplas `(file_path, func_name)` regredidas, ou None se
+        a comparação falhar (ex: erro interno do `compute_diff` — o
+        contrato do sensor é degradar para análise completa sem diff).
     """
-    compute_diff_fn = getattr(complexipy_mod, "compute_diff")
     try:
-        diff_entries = compute_diff_fn(file_results, diff_ref, str(resolved_root))
-    except Exception:
+        diff_entries = complexipy.compute_diff(file_results, diff_ref, str(resolved_root))
+    except ValueError:
         return None
 
     return {
-        (str(getattr(entry, "file_path", "")), str(getattr(entry, "func_name", "")))
+        (entry.file_path, entry.func_name)
         for entry in diff_entries
         if is_diff_entry_regressed(entry, max_complexity)
     }
@@ -451,21 +444,16 @@ def run_complexity_sensor(
     Returns:
         Lista de violações com sugestões de refatoração prontas para o LLM.
     """
-    if importlib.util.find_spec("complexipy") is None:
-        return []
-
-    import complexipy
-
     resolved_root = (root_dir or Path.cwd()).resolve()
     py_files = collect_python_files(targets, resolved_root)
     if not py_files:
         return []
 
-    file_results, display_map = analyze_files_batch(complexipy, py_files, resolved_root)
+    file_results, display_map = analyze_files_batch(py_files, resolved_root)
     regressed_keys: set[tuple[str, str]] | None = None
     if diff_ref and file_results:
         regressed_keys = compute_regressed_keys(
-            complexipy, file_results, diff_ref, resolved_root, max_complexity
+            file_results, diff_ref, resolved_root, max_complexity
         )
 
     violations: list[ComplexityViolation] = []

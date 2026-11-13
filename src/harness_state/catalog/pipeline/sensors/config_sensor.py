@@ -220,9 +220,7 @@ def is_ignored_by_git(file_path: Path, root_dir: Path) -> bool:
                 return True
         elif fnmatch.fnmatch(path_str, clean_rule) or fnmatch.fnmatch(
             file_name, clean_rule
-        ):
-            return True
-        elif clean_rule.startswith("*") and fnmatch.fnmatch(file_name, clean_rule):
+        ) or (clean_rule.startswith("*") and fnmatch.fnmatch(file_name, clean_rule)):
             return True
 
     return False
