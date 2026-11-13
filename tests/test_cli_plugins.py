@@ -90,3 +90,53 @@ def test_load_plugins_tolerates_broken_plugin(
     assert "ok-cmd" in fresh.commands
     captured = capsys.readouterr()
     assert "broken" in (captured.err + captured.out)
+
+
+def montar_plugin_setup_na_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Registra um plugin fake com o comando `setup` e reabre a montagem de plugins.
+
+    Args:
+        monkeypatch: Fixture do pytest para patchar a descoberta de entry points.
+    """
+
+    def register_setup(group: click.Group) -> None:
+        group.add_command(click.Command("setup", help="inicializa config"))
+
+    fake_ep: Any = type(
+        "EP", (), {"name": "flywheel", "load": lambda self: register_setup}
+    )()
+    monkeypatch.setattr(cli_module, "list_available_plugins", lambda: [fake_ep])
+    monkeypatch.setattr(main, "plugins_mounted", False, raising=False)
+
+
+def test_binario_harness_resolve_comando_de_plugin_no_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Business Rule: no binário real, um comando de plugin é resolvido no dispatch.
+
+    Reproduz a falha de produção do flywheel em CI: `harness setup --ci` retornava
+    "No such command 'setup'" porque os plugins nunca eram montados no grupo
+    público — o chamador não pode precisar invocar `load_plugins_into` manualmente.
+    """
+    from click.testing import CliRunner
+
+    montar_plugin_setup_na_cli(monkeypatch)
+
+    result = CliRunner().invoke(main, ["setup"])
+    assert "No such command" not in result.output
+    assert result.exit_code != 2
+
+
+def test_binario_harness_lista_comandos_de_plugin_na_ajuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Business Rule: `harness --help` expõe os comandos aportados por plugins."""
+    from click.testing import CliRunner
+
+    montar_plugin_setup_na_cli(monkeypatch)
+
+    result = CliRunner().invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "setup" in result.output
