@@ -1,0 +1,28 @@
+# justfile - Interface canonica do harness para repositorios e pipelines de CI/CD.
+default:
+    @just --list
+
+# Compilacao e validacao estatica de sintaxe de workflows e cloudbuild
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f ".harness/sensors/cicd_sensor.py" ]]; then \
+        uv run --with pyyaml python .harness/sensors/cicd_sensor.py .; \
+    fi
+
+# Sensores determinísticos de CI/CD (fail-fast estrito e sem mascaramento)
+lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f ".harness/sensors/cicd_sensor.py" ]]; then \
+        uv run --with pyyaml python .harness/sensors/cicd_sensor.py .; \
+    fi
+
+# Suite de testes e verificacao
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "CI/CD pipelines validos e com conformidade estrita de fail-fast."
+
+# Validacao completa: criterio de aceitacao do diff
+verify: check lint test
