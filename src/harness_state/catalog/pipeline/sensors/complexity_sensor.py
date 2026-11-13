@@ -5,15 +5,25 @@ identifica funções que excedem o limite máximo de complexidade cognitiva (pad
 e extrai as sugestões determinísticas de refatoração (`refactor_plans`) do complexipy,
 formatando-as em linhas prescritivas (`arquivo:linha:coluna: CODIGO mensagem`)
 compatíveis com o `format_feedback.sh` para alimentar diretamente os agentes LLM.
+
+Este artefato é copiado para repositórios-alvo pelo instalador, onde ``complexipy``
+é dependência opcional: a importação é feita sob demanda via `load_complexipy`,
+degradando graciosamente (lista vazia de violações) quando ausente.
 """
 
+from __future__ import annotations
+
 import argparse
+import importlib.util
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING
 
-import complexipy
+if TYPE_CHECKING:
+    import complexipy
 
 DEFAULT_MAX_COMPLEXITY = 15
 
@@ -265,7 +275,11 @@ def check_complexity_source(
     Returns:
         Lista de `ComplexityViolation` para funções que excedem `max_complexity`.
     """
-    result = complexipy.code_complexity(source, with_plans=True)
+    module = load_complexipy()
+    if module is None:
+        return []
+
+    result = module.code_complexity(source, with_plans=True)
     violations: list[ComplexityViolation] = []
     for func in getattr(result, "functions", []):
         if int(getattr(func, "complexity", 0)) > max_complexity:
@@ -291,6 +305,20 @@ def resolve_relative_file_path(py_file: Path, resolved_root: Path) -> str:
         return str(py_file)
 
 
+def load_complexipy() -> ModuleType | None:
+    """Importa `complexipy` sob demanda, respeitando sua opcionalidade no alvo.
+
+    Returns:
+        Módulo `complexipy` carregado ou None quando não instalado.
+    """
+    if importlib.util.find_spec("complexipy") is None:
+        return None
+
+    import complexipy
+
+    return complexipy
+
+
 def analyze_single_file(file_path: str) -> complexipy.FileComplexity | None:
     """Executa `complexipy.file_complexity` com tratamento plano de falhas.
 
@@ -300,10 +328,14 @@ def analyze_single_file(file_path: str) -> complexipy.FileComplexity | None:
     Returns:
         Objeto `FileComplexity` ou None se o arquivo não puder ser
         lido/parseado (contrato documentado do sensor: arquivo ilegível
-        não bloqueia a análise dos demais).
+        não bloqueia a análise dos demais) ou se o `complexipy` não
+        estiver disponível.
     """
+    module = load_complexipy()
+    if module is None:
+        return None
     try:
-        return complexipy.file_complexity(file_path, with_plans=True)
+        return module.file_complexity(file_path, with_plans=True)
     except ValueError:
         return None
 
@@ -372,11 +404,18 @@ def compute_regressed_keys(
 
     Returns:
         Conjunto de tuplas `(file_path, func_name)` regredidas, ou None se
-        a comparação falhar (ex: erro interno do `compute_diff` — o
-        contrato do sensor é degradar para análise completa sem diff).
+        a comparação falhar (ex: erro interno do `compute_diff` ou ambiente
+        sem `complexipy` — o contrato do sensor é degradar para análise
+        completa sem diff).
     """
+    module = load_complexipy()
+    if module is None:
+        return None
+
     try:
-        diff_entries = complexipy.compute_diff(file_results, diff_ref, str(resolved_root))
+        diff_entries = module.compute_diff(
+            file_results, diff_ref, str(resolved_root)
+        )
     except ValueError:
         return None
 
@@ -444,6 +483,9 @@ def run_complexity_sensor(
     Returns:
         Lista de violações com sugestões de refatoração prontas para o LLM.
     """
+    if load_complexipy() is None:
+        return []
+
     resolved_root = (root_dir or Path.cwd()).resolve()
     py_files = collect_python_files(targets, resolved_root)
     if not py_files:

@@ -1,31 +1,34 @@
 """Sensores de coleta/validação do ecossistema Harness (Onda 1).
 
-Este módulo contém apenas as **definições** dos sensores (dataclasses, validadores).
-A **execução server-side** (ExecutionSensor, RunnerHealthSensor) permanece no flywheel.
+Implementações migradas do agentic-flywheel: AST (PYF), CI/CD (CICD),
+complexidade cognitiva (complexipy), configuração (CFG) e governança de
+prompts Langfuse (PRM), mais o baseline de tipos do pyright.
 """
 
+from .cicd_sensor import CICDValidator
 from .complexity_sensor import (
     DEFAULT_MAX_COMPLEXITY,
     IGNORED_DIRS,
-    ComplexitySensor,
     ComplexityViolation,
+    run_complexity_sensor,
 )
 from .config_sensor import (
     FORBIDDEN_FILE_PATTERNS,
     REAL_DOMAINS_PATTERN,
     REAL_IPS_PATTERN,
     REAL_SECRET_PATTERNS,
-    ConfigSensor,
     ConfigViolation,
+    check_forbidden_files,
+    run_config_sensor,
+    scan_file_for_config_violations,
 )
 from .prompt_sensor import (
     PROMPT_RULES,
-    PromptSensor,
+    PromptGovernanceSensor,
     PromptViolation,
 )
 from .type_baseline import (
     DEFAULT_BASELINE_PATH,
-    TypeBaselineSensor,
     TypeBaselineViolation,
 )
 
@@ -38,16 +41,19 @@ __all__ = [
     "REAL_DOMAINS_PATTERN",
     "REAL_IPS_PATTERN",
     "REAL_SECRET_PATTERNS",
-    "ComplexitySensor",
-    # Complexity
+    # CI/CD
+    "CICDValidator",
+    # Complexidade
     "ComplexityViolation",
-    "ConfigSensor",
     # Config
     "ConfigViolation",
-    "PromptSensor",
     # Prompt
+    "PromptGovernanceSensor",
     "PromptViolation",
-    "TypeBaselineSensor",
     # Type Baseline
     "TypeBaselineViolation",
+    "check_forbidden_files",
+    "run_complexity_sensor",
+    "run_config_sensor",
+    "scan_file_for_config_violations",
 ]

@@ -146,22 +146,83 @@ SPEC_PATTERNS: dict[str, tuple[str, list[re.Pattern[str]]]] = {
 }
 
 
-def extract_added_lines(diff_text: str) -> str:
+def extract_added_lines(diff_text: str, file_suffix: str | None = None) -> str:
     """Extrai somente as linhas adicionadas ou modificadas de um git diff.
 
-    Descarta cabecalhos de patch (ex: '+++ b/...') e linhas de contexto ou exclusao.
+    Descarta cabecalhos de patch e linhas de contexto ou exclusao.
+    Opcionalmente filtra arquivos por sufixo de extensao (ex: '.py').
 
     Args:
         diff_text: Texto no formato unified diff.
+        file_suffix: Extensao opcional para filtrar os arquivos (ex: '.py').
 
     Returns:
         String consolidada contendo o conteudo das linhas adicionadas.
     """
     lines: list[str] = []
+    current_file = ""
     for line in diff_text.splitlines():
+        if line.startswith("+++ b/"):
+            current_file = line[6:].strip()
+            continue
+        if line.startswith("+++ "):
+            current_file = line[4:].strip()
+            continue
+        if file_suffix and current_file and not current_file.endswith(file_suffix):
+            continue
         if line.startswith("+") and not line.startswith("+++"):
             lines.append(line[1:])
     return "\n".join(lines)
+
+
+def line_matches_diff_target_suffix(line: str, file_suffix: str) -> bool:
+    """Verifica se uma linha de cabecalho de patch aponta para o sufixo desejado.
+
+    Args:
+        line: Linha de cabecalho de diff.
+        file_suffix: Extensao esperada (ex: '.py').
+
+    Returns:
+        True se a linha declarar um arquivo alvo com o sufixo especificado.
+    """
+    if line.startswith("+++ b/"):
+        return line[6:].strip().endswith(file_suffix)
+    if line.startswith("+++ "):
+        return line[4:].strip().endswith(file_suffix)
+    return False
+
+
+def filter_diff_by_suffix(diff_text: str, file_suffix: str = ".py") -> str:
+    """Filtra blocos de patch do git diff que correspondam ao sufixo de arquivo.
+
+    Args:
+        diff_text: Texto no formato unified diff.
+        file_suffix: Extensao opcional para filtrar os arquivos (ex: '.py').
+
+    Returns:
+        String consolidada contendo os blocos de diff dos arquivos correspondentes.
+    """
+    blocks: list[str] = []
+    current_block: list[str] = []
+    include_current = False
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            if current_block and include_current:
+                blocks.append("\n".join(current_block))
+            current_block = [line]
+            include_current = False
+            continue
+
+        if line_matches_diff_target_suffix(line, file_suffix):
+            include_current = True
+
+        current_block.append(line)
+
+    if current_block and include_current:
+        blocks.append("\n".join(current_block))
+
+    return "\n\n".join(blocks)
 
 
 def route_code(source: str) -> RoutingResult:
@@ -189,14 +250,121 @@ def route_code(source: str) -> RoutingResult:
 def route_diff(diff_text: str) -> RoutingResult:
     """Processa um patch unificado do git e determina as specs aplicaveis.
 
+    Filtra estritamente linhas adicionadas em arquivos Python (.py).
+
     Args:
         diff_text: Texto bruto de saida do git diff.
 
     Returns:
         Instancia de RoutingResult.
     """
-    added_content = extract_added_lines(diff_text)
+    added_content = extract_added_lines(diff_text, file_suffix=".py")
+    if not added_content.strip():
+        if "+++ " not in diff_text:
+            return route_code(diff_text)
+        return RoutingResult()
     return route_code(added_content)
+
+
+def get_spec_reference_dir() -> Path | None:
+    """Localiza o diretorio de especificacoes de referencia Python Fluente.
+
+    Returns:
+        Caminho Path se encontrado, ou None se nenhum diretorio for valido.
+    """
+    candidates = [
+        Path(__file__).resolve().parent
+        / "catalog"
+        / "skills"
+        / "python"
+        / "fluent-python"
+        / "references",
+        Path(__file__).resolve().parent.parent.parent / "specs" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def extract_normative_rules(spec_markdown: str) -> str:
+    """Extrai exclusivamente a secao de regras normativas de uma especificacao.
+
+    Args:
+        spec_markdown: Conteudo Markdown integral da especificacao.
+
+    Returns:
+        Texto contendo as regras normativas extraidas.
+    """
+    start_marker = "## 2. Regras normativas"
+    if start_marker not in spec_markdown:
+        return spec_markdown.strip()
+
+    section = spec_markdown.split(start_marker, 1)[1]
+    end_marker = "## 3."
+    if end_marker in section:
+        section = section.split(end_marker, 1)[0]
+
+    return section.strip()
+
+
+def find_spec_file_in_dir(spec_id: str, directory: Path) -> Path | None:
+    """Localiza o arquivo de especificacao correspondente ao spec_id no diretorio.
+
+    Args:
+        spec_id: Identificador da especificacao (ex: PY-01 ou PY-05).
+        directory: Diretorio de busca.
+
+    Returns:
+        Path do arquivo encontrado ou None.
+    """
+    pattern = f"*{spec_id}*.md"
+    matches = sorted(directory.glob(pattern))
+    if matches:
+        return matches[0]
+    return None
+
+
+def collect_fluent_python_guidelines(
+    diff_text: str, specs_dir: Path | None = None
+) -> str:
+    """Coleta e formata as regras normativas das specs de Python Fluente ativadas.
+
+    Args:
+        diff_text: Texto do git diff unificado.
+        specs_dir: Diretorio opcional contendo os arquivos SPEC-PY-*.md.
+
+    Returns:
+        Bloco de diretrizes Markdown ou string vazia se nenhuma spec for ativada.
+    """
+    result = route_diff(diff_text)
+    if not result.specs:
+        return ""
+
+    effective_dir = specs_dir if specs_dir is not None else get_spec_reference_dir()
+    if effective_dir is None or not effective_dir.is_dir():
+        return ""
+
+    guideline_sections: list[str] = []
+    for spec_id in sorted(result.specs):
+        spec_file = find_spec_file_in_dir(spec_id, effective_dir)
+        if spec_file and spec_file.is_file():
+            content = spec_file.read_text(encoding="utf-8")
+            rules = extract_normative_rules(content)
+            guideline_sections.append(
+                f"#### SPEC-{spec_id} ({spec_file.stem})\n{rules}"
+            )
+
+    if not guideline_sections:
+        return ""
+
+    joined_rules = "\n\n".join(guideline_sections)
+    return (
+        "### Diretrizes Normativas de Python Fluente Aplicáveis ao Diff\n\n"
+        "As alterações submetidas ativam os padrões das seguintes "
+        "especificações canônicas:\n\n"
+        f"{joined_rules}"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

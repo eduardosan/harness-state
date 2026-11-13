@@ -14,6 +14,8 @@ para consumo direto pelo format_feedback.sh e verificação canônica just verif
 import fnmatch
 import os
 import re
+import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,8 +78,10 @@ SCANNABLE_EXTENSIONS = {
     ".json",
     ".toml",
     ".ini",
-    ".md",
-    ".txt",
+    ".ts",
+    ".js",
+    ".go",
+    ".rb",
     ".sh",
     ".bash",
     ".zsh",
@@ -107,133 +111,332 @@ class ConfigViolation:
     message: str
 
     def format_output(self) -> str:
-        """Formata a violação no padrão esperado pelos sensores do harness.
-
-        Returns:
-            String no formato 'arquivo:linha:coluna: CODIGO mensagem'.
-        """
+        """Formata a violação no padrão consumível por format_feedback.sh."""
         return (
             f"{self.file_path}:{self.line_number}:{self.col_number}: "
             f"{self.code} {self.message}"
         )
 
 
-class ConfigSensor:
-    """Sensor determinístico de higiene de configuração e proteção 12-Factor."""
+def parse_gitignore_rules(root_dir: Path) -> list[str]:
+    """Lê e compila regras ativas do arquivo .gitignore da raiz."""
+    gitignore_file = root_dir / ".gitignore"
+    if not gitignore_file.is_file():
+        return []
+    rules: list[str] = []
+    try:
+        content = gitignore_file.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            rules.append(stripped)
+    except OSError:
+        return []
+    return rules
 
-    def __init__(
-        self,
-        root_dir: Path,
-        ignored_dirs: set[str] | None = None,
-        scannable_extensions: set[str] | None = None,
-    ) -> None:
-        """Inicializa o sensor.
 
-        Args:
-            root_dir: Diretório raiz a partir de onde os arquivos serão buscados.
-            ignored_dirs: Diretórios a ignorar durante a varredura.
-            scannable_extensions: Extensões de arquivo a escanear.
-        """
-        self.root_dir = root_dir.resolve()
-        self.ignored_dirs = ignored_dirs or IGNORED_DIRS
-        self.scannable_extensions = scannable_extensions or SCANNABLE_EXTENSIONS
-        self.violations: list[ConfigViolation] = []
+def get_git_tracked_files(root_dir: Path) -> set[str]:
+    """Obtém caminhos relativos rastreados lendo o índice do Git de forma pura."""
+    index_path = root_dir / ".git" / "index"
+    if not index_path.is_file():
+        return set()
+    try:
+        data = index_path.read_bytes()
+        if len(data) < 12 or data[:4] != b"DIRC":
+            return set()
+        _, num_entries = struct.unpack(">II", data[4:12])
+        pos = 12
+        files: set[str] = set()
+        for _ in range(num_entries):
+            if pos + 62 > len(data):
+                break
+            pos += 62
+            null_pos = data.find(b"\x00", pos)
+            if null_pos == -1:
+                break
+            path_bytes = data[pos:null_pos]
+            files.add(path_bytes.decode("utf-8", errors="replace"))
+            entry_len = 62 + len(path_bytes) + 1
+            padding = (8 - (entry_len % 8)) % 8
+            pos = null_pos + 1 + padding
+        return files
+    except (OSError, struct.error, ValueError):
+        return set()
 
-    def scan(self) -> list[ConfigViolation]:
-        """Executa a varredura completa no diretório raiz.
 
-        Returns:
-            Lista de violações encontradas.
-        """
-        self.violations = []
-        for file_path in self._find_scannable_files():
-            self._scan_file(file_path)
-        return self.violations
+def is_tracked_by_git(file_path: Path, root_dir: Path) -> bool:
+    """Verifica se o arquivo está rastreado no repositório Git."""
+    try:
+        rel_str = file_path.relative_to(root_dir).as_posix()
+        tracked = get_git_tracked_files(root_dir)
+        return rel_str in tracked
+    except (ValueError, OSError):
+        return False
 
-    def _find_scannable_files(self) -> list[Path]:
-        """Localiza todos os arquivos escaneáveis no projeto."""
-        found_files: list[Path] = []
-        for root, dirs, fnames in os.walk(self.root_dir):
-            dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
 
-            root_path = Path(root)
-            for file in fnames:
-                file_path = root_path / file
-                if file_path.suffix in self.scannable_extensions:
-                    found_files.append(file_path)
-        return found_files
+def is_ignored_by_git(file_path: Path, root_dir: Path) -> bool:
+    """Verifica se o arquivo está adequadamente ignorado no .gitignore."""
+    try:
+        rel_path = file_path.relative_to(root_dir)
+    except ValueError:
+        return False
 
-    def _scan_file(self, file_path: Path) -> None:
-        """Escaneia um único arquivo em busca de violações."""
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, UnicodeDecodeError):
-            return
+    rules = parse_gitignore_rules(root_dir)
+    if not rules:
+        return False
 
-        self._check_forbidden_files(file_path)
-        self._check_real_domains(file_path, content)
-        self._check_real_ips(file_path, content)
-        self._check_real_secrets(file_path, content)
+    path_str = rel_path.as_posix()
+    file_name = file_path.name
 
-    def _check_forbidden_files(self, file_path: Path) -> None:
-        """CFG001: Arquivos de configuração proibidos."""
-        relative = file_path.relative_to(self.root_dir)
-        for pattern in FORBIDDEN_FILE_PATTERNS:
-            if fnmatch.fnmatch(file_path.name, pattern) or fnmatch.fnmatch(
-                str(relative), pattern
-            ):
-                self.violations.append(
-                    ConfigViolation(
-                        file_path=relative,
-                        line_number=1,
-                        col_number=1,
-                        code="CFG001",
-                        message=f"Arquivo de configuração proibido detectado: {file_path.name}. Use variáveis de ambiente ou secrets management.",
-                    )
-                )
+    for rule in rules:
+        clean_rule = rule.lstrip("/")
+        if rule.endswith("/"):
+            dir_name = clean_rule.rstrip("/")
+            if dir_name in rel_path.parts:
+                return True
+        elif fnmatch.fnmatch(path_str, clean_rule) or fnmatch.fnmatch(
+            file_name, clean_rule
+        ) or (clean_rule.startswith("*") and fnmatch.fnmatch(file_name, clean_rule)):
+            return True
 
-    def _check_real_domains(self, file_path: Path, content: str) -> None:
-        """CFG002: Domínios corporativos/produção reais no código."""
-        for match in REAL_DOMAINS_PATTERN.finditer(content):
-            line_num = content[: match.start()].count("\n") + 1
-            col_num = match.start() - content.rfind("\n", 0, match.start())
-            self.violations.append(
+    return False
+
+
+def build_forbidden_file_violation(
+    match: Path,
+    rel_path: Path,
+    root_dir: Path,
+    git_present: bool,
+) -> ConfigViolation | None:
+    """Cria uma violação CFG001 para um arquivo proibido se aplicável."""
+    if not git_present:
+        return ConfigViolation(
+            file_path=rel_path,
+            line_number=1,
+            col_number=1,
+            code="CFG001",
+            message=(
+                f"Arquivo proibido '{rel_path}' detectado no repositório. "
+                "Padrão 12-Factor exige configuração via variáveis de ambiente."
+            ),
+        )
+
+    if is_tracked_by_git(match, root_dir):
+        return ConfigViolation(
+            file_path=rel_path,
+            line_number=1,
+            col_number=1,
+            code="CFG001",
+            message=(
+                f"Arquivo proibido '{rel_path}' rastreado no Git. "
+                "Padrão 12-Factor exige variáveis de ambiente. "
+                "Remova com 'git rm --cached' e ignore no .gitignore."
+            ),
+        )
+
+    if not is_ignored_by_git(match, root_dir):
+        return ConfigViolation(
+            file_path=rel_path,
+            line_number=1,
+            col_number=1,
+            code="CFG001",
+            message=(
+                f"Arquivo proibido '{rel_path}' não ignorado "
+                "no .gitignore. Adicione ao .gitignore para não "
+                "permitir envio de configuração para o git."
+            ),
+        )
+
+    return None
+
+
+def find_forbidden_pattern_matches(root_dir: Path, pattern: str) -> list[Path]:
+    """Busca arquivos correspondentes a um padrão proibido na raiz ou árvore."""
+    if "/" in pattern:
+        return list(root_dir.glob(pattern))
+    return list(root_dir.glob(pattern)) + list(root_dir.rglob(pattern))
+
+
+def should_inspect_forbidden_candidate(
+    match: Path,
+    root_dir: Path,
+    seen_paths: set[Path],
+) -> Path | None:
+    """Retorna o caminho relativo caso o arquivo candidato deva ser inspecionado."""
+    if not match.is_file():
+        return None
+    rel_path = match.relative_to(root_dir)
+    if rel_path in seen_paths:
+        return None
+    if any(part in IGNORED_DIRS for part in rel_path.parts[:-1]):
+        return None
+    seen_paths.add(rel_path)
+    return rel_path
+
+
+def check_forbidden_files(root_dir: Path) -> list[ConfigViolation]:
+    """Varre a raiz e subdiretórios procurando por arquivos proibidos de configuração."""
+    violations: list[ConfigViolation] = []
+    seen_paths: set[Path] = set()
+    git_present = (root_dir / ".git").exists()
+
+    for pattern in FORBIDDEN_FILE_PATTERNS:
+        for match in find_forbidden_pattern_matches(root_dir, pattern):
+            rel_path = should_inspect_forbidden_candidate(match, root_dir, seen_paths)
+            if rel_path is None:
+                continue
+            violation = build_forbidden_file_violation(
+                match, rel_path, root_dir, git_present
+            )
+            if violation is not None:
+                violations.append(violation)
+    return violations
+
+
+def is_test_file(rel_path: Path) -> bool:
+    """Verifica se o arquivo pertence à suíte ou diretório de testes."""
+    parts = rel_path.parts
+    if "tests" in parts or "test" in parts or "spec" in parts:
+        return True
+    fname = rel_path.name
+    return fname.startswith("test_") or fname.endswith("_test.py")
+
+
+def scan_line_for_config_violations(
+    line: str,
+    idx: int,
+    rel_path: Path,
+    in_test: bool,
+) -> list[ConfigViolation]:
+    """Inspeciona uma única linha em busca de segredos, domínios ou IPs corporativos."""
+    line_violations: list[ConfigViolation] = []
+    for secret_pattern in REAL_SECRET_PATTERNS:
+        match = secret_pattern.search(line)
+        if match:
+            line_violations.append(
                 ConfigViolation(
-                    file_path=file_path.relative_to(self.root_dir),
-                    line_number=line_num,
-                    col_number=col_num,
-                    code="CFG002",
-                    message=f"Domínio de produção real detectado: {match.group()}. Use placeholders como {{INTERNAL_HOST}}.",
+                    file_path=rel_path,
+                    line_number=idx,
+                    col_number=match.start() + 1,
+                    code="CFG004",
+                    message=(
+                        "Chave de API secreta real hardcoded detectada. "
+                        "Segredos devem ser injetados exclusivamente via "
+                        "variáveis de ambiente."
+                    ),
                 )
             )
 
-    def _check_real_ips(self, file_path: Path, content: str) -> None:
-        """CFG002: IPs de infraestrutura real no código."""
-        for match in REAL_IPS_PATTERN.finditer(content):
-            line_num = content[: match.start()].count("\n") + 1
-            col_num = match.start() - content.rfind("\n", 0, match.start())
-            self.violations.append(
-                ConfigViolation(
-                    file_path=file_path.relative_to(self.root_dir),
-                    line_number=line_num,
-                    col_number=col_num,
-                    code="CFG002",
-                    message=f"IP de infraestrutura real detectado: {match.group()}. Use placeholders como {{SERVER_IP}}.",
-                )
+    for match in REAL_DOMAINS_PATTERN.finditer(line):
+        line_num = idx
+        col_num = match.start() + 1
+        matched_text = match.group(0)
+        code = "CFG003" if in_test else "CFG002"
+        msg = (
+            f"Host corporativo real '{matched_text}' em teste. "
+            "Testes DEVEM usar configurações genéricas (ex: "
+            "http://mock-service, http://localhost:8080) "
+            "não rastreáveis a sistemas reais."
+            if in_test
+            else f"Domínio real '{matched_text}' hardcoded no código. "
+            "Utilize variáveis de ambiente injetadas via ArgoCD/K8s."
+        )
+        line_violations.append(
+            ConfigViolation(
+                file_path=rel_path,
+                line_number=line_num,
+                col_number=col_num,
+                code=code,
+                message=msg,
             )
+        )
 
-    def _check_real_secrets(self, file_path: Path, content: str) -> None:
-        """CFG004: Tokens/chaves de API com formato real hardcoded."""
-        for pattern in REAL_SECRET_PATTERNS:
-            for match in pattern.finditer(content):
-                line_num = content[: match.start()].count("\n") + 1
-                col_num = match.start() - content.rfind("\n", 0, match.start())
-                self.violations.append(
-                    ConfigViolation(
-                        file_path=file_path.relative_to(self.root_dir),
-                        line_number=line_num,
-                        col_number=col_num,
-                        code="CFG004",
-                        message=f"Token/segredo real detectado ({match.group()[:10]}...). Use variáveis de ambiente ou secret management.",
-                    )
-                )
+    for match in REAL_IPS_PATTERN.finditer(line):
+        line_num = idx
+        col_num = match.start() + 1
+        matched_text = match.group(0)
+        code = "CFG003" if in_test else "CFG002"
+        msg = (
+            f"IP de infraestrutura real '{matched_text}' em teste. "
+            "Testes DEVEM usar hosts genéricos (ex: 127.0.0.1)."
+            if in_test
+            else f"IP de infraestrutura real '{matched_text}' no código. "
+            "Utilize variáveis de ambiente configuradas externamente."
+        )
+        line_violations.append(
+            ConfigViolation(
+                file_path=rel_path,
+                line_number=line_num,
+                col_number=col_num,
+                code=code,
+                message=msg,
+            )
+        )
+
+    return line_violations
+
+
+def scan_file_for_config_violations(
+    file_path: Path, root_dir: Path
+) -> list[ConfigViolation]:
+    """Analisa o conteúdo de um arquivo individual em busca de configurações reais."""
+    violations: list[ConfigViolation] = []
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return violations
+
+    rel_path = file_path.relative_to(root_dir)
+    in_test = is_test_file(rel_path)
+
+    for idx, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        violations.extend(scan_line_for_config_violations(line, idx, rel_path, in_test))
+
+    return violations
+
+
+def is_scannable_config_file(file_path: Path) -> bool:
+    """Verifica se um arquivo deve ser inspecionado pelo sensor de configuração."""
+    if file_path.suffix not in SCANNABLE_EXTENSIONS:
+        return False
+    return file_path.name not in {"config_sensor.py", "test_config_sensor.py"}
+
+
+def run_config_sensor(root_dir: Path) -> list[ConfigViolation]:
+    """Executa varredura completa de higiene de configuração no repositório."""
+    violations: list[ConfigViolation] = []
+    violations.extend(check_forbidden_files(root_dir))
+
+    for current_root, dirs, files in os.walk(root_dir):
+        dirs[:] = [
+            d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".git")
+        ]
+        curr_path = Path(current_root)
+        for fname in files:
+            file_path = curr_path / fname
+            if not is_scannable_config_file(file_path):
+                continue
+            violations.extend(scan_file_for_config_violations(file_path, root_dir))
+
+    return violations
+
+
+def main() -> int:
+    """Ponto de entrada para execução CLI do sensor de configuração."""
+    target_dir = (
+        Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd().resolve()
+    )
+    violations = run_config_sensor(target_dir)
+
+    for violation in violations:
+        print(violation.format_output())
+
+    return 1 if violations else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

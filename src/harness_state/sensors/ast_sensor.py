@@ -90,6 +90,21 @@ def is_wraps_decorator(decorator: ast.expr) -> bool:
     return False
 
 
+def raises_type_error(node: ast.Raise) -> bool:
+    """Indica se um ``raise`` levanta ``TypeError``.
+
+    Args:
+        node: No de AST do ``raise``.
+
+    Returns:
+        True para ``raise TypeError`` e ``raise TypeError(...)``.
+    """
+    exc = node.exc
+    if isinstance(exc, ast.Call):
+        exc = exc.func
+    return isinstance(exc, ast.Name) and exc.id == "TypeError"
+
+
 def has_function_ancestor(parent_map: dict[ast.AST, ast.AST], node: ast.AST) -> bool:
     """Indica se o no esta aninhado (transitivamente) dentro de uma funcao.
 
@@ -203,29 +218,24 @@ def check_source(source: str) -> list[Violation]:
                         )
                     )
 
-        # PYF003: raise TypeError in operator
-        if isinstance(node, ast.FunctionDef):
-            for base_name in OPERATOR_DUNDERS:
-                if node.name == base_name:
-                    for child in ast.walk(node):
-                        if (
-                            isinstance(child, ast.Raise)
-                            and isinstance(child.exc, ast.Call)
-                            and isinstance(child.exc.func, ast.Name)
-                            and child.exc.func.id == "TypeError"
-                        ):
-                            violations.append(
-                                Violation(
-                                    rule="PYF003",
-                                    line=child.lineno,
-                                    column=child.col_offset + 1,
-                                    message=(
-                                        "Levantar TypeError em operador impede "
-                                        "o operador reflexo; retorne NotImplemented."
-                                    ),
-                                )
-                            )
-                            break
+        # PYF003: raise TypeError in operator (inclui operadores async)
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in OPERATOR_DUNDERS
+        ):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Raise) and raises_type_error(child):
+                    violations.append(
+                        Violation(
+                            rule="PYF003",
+                            line=child.lineno,
+                            column=child.col_offset + 1,
+                            message=(
+                                "Levantar TypeError em operador impede "
+                                "o operador reflexo; retorne NotImplemented."
+                            ),
+                        )
+                    )
 
         # PYF004: mutable default arguments
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
