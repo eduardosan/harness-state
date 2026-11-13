@@ -340,7 +340,7 @@ class FlywheelConfig:
     notify_slack: bool = False
 
 
-def _run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def run_command(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """Executa comando e retorna resultado."""
     env_final = os.environ.copy()
     if env:
@@ -355,12 +355,12 @@ def _run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = N
     )
 
 
-def _ensure_dir(path: Path) -> None:
+def ensure_dir(path: Path) -> None:
     """Garante que diretório existe."""
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _write_file(path: Path, content: str) -> None:
+def write_file(path: Path, content: str) -> None:
     """Escreve arquivo criando diretórios se necessário."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -387,7 +387,7 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
         path / "sensors",
     ]
     for d in dirs:
-        _ensure_dir(d)
+        ensure_dir(d)
 
     # pyproject.toml
     pyproject_content = FLYWHEEL_PYPROJECT_TEMPLATE.format(
@@ -395,7 +395,7 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
         agentic_version="0.1.0",
         harness_version="0.4.0",
     )
-    _write_file(path / "pyproject.toml", pyproject_content)
+    write_file(path / "pyproject.toml", pyproject_content)
 
     # config.yaml
     config_content = FLYWHEEL_CONFIG_TEMPLATE.format(
@@ -404,23 +404,23 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
         repo="eduardosan/agentic-flywheel",
         branch="main",
     )
-    _write_file(path / "config.yaml", config_content)
+    write_file(path / "config.yaml", config_content)
 
     # agents.py (vazio - usa harness_state)
-    _write_file(path / "agents.py", FLYWHEEL_AGENTS_TEMPLATE)
+    write_file(path / "agents.py", FLYWHEEL_AGENTS_TEMPLATE)
 
     # catalog/ (vazio - usa harness_state.catalog)
-    _write_file(path / "catalog" / "__init__.py", FLYWHEEL_CATALOG_TEMPLATE)
+    write_file(path / "catalog" / "__init__.py", FLYWHEEL_CATALOG_TEMPLATE)
 
     # sensors/ (vazio - usa harness_state.sensors)
-    _write_file(path / "sensors" / "__init__.py", FLYWHEEL_SENSORS_TEMPLATE)
+    write_file(path / "sensors" / "__init__.py", FLYWHEEL_SENSORS_TEMPLATE)
 
     # Workflows
     Path(".") / ".github" / "workflows"
-    _ensure_dir(path / ".github" / "workflows")
-    _write_file(path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE)
-    _write_file(path / ".github" / "workflows" / "spec-dispatch.yml", FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE)
-    _write_file(path / ".github" / "workflows" / "capabilities-sync.yml", FLYWHEEL_WORKFLOW_CAPABILITIES_TEMPLATE)
+    ensure_dir(path / ".github" / "workflows")
+    write_file(path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE)
+    write_file(path / ".github" / "workflows" / "spec-dispatch.yml", FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE)
+    write_file(path / ".github" / "workflows" / "capabilities-sync.yml", FLYWHEEL_WORKFLOW_CAPABILITIES_TEMPLATE)
 
     # README
     readme_content = f"""# {path.name} - Flywheel Execution Engine
@@ -454,7 +454,7 @@ harness flywheel update {path.name}
 harness flywheel status {path.name}
 ```
 """
-    _write_file(path / "README.md", readme_content)
+    write_file(path / "README.md", readme_content)
 
     console.print(f"[bold green]✓[/bold green] Flywheel inicializado em {path}")
     console.print("  Estrutura criada com:")
@@ -509,7 +509,7 @@ def check_flywheel_status(path: Path) -> None:
     console.print("\n[bold green]✓[/bold green] Health check concluído")
 
 
-def _load_flywheel_config(config_path: Path) -> list[dict[str, Any]]:
+def load_flywheel_config(config_path: Path) -> list[dict[str, Any]]:
     """Carrega configuração de flywheels do config.yaml."""
     if not config_path.exists():
         return []
@@ -524,7 +524,7 @@ def _load_flywheel_config(config_path: Path) -> list[dict[str, Any]]:
 def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, strategy_semver: str = "patch") -> None:
     """Atualiza todos os flywheels configurados no config.yaml."""
     config_path = Path("config.yaml")
-    flywheels = _load_flywheel_config(config_path)
+    flywheels = load_flywheel_config(config_path)
 
     if not flywheels:
         console.print("[yellow]Nenhum flywheel configurado em config.yaml[/yellow]")
@@ -652,7 +652,7 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     # Roda pip install -U
     console.print("[bold cyan]Instalando dependências atualizadas...[/bold cyan]")
-    result = _run(["uv", "sync", "--frozen"], cwd=path)
+    result = run_command(["uv", "sync", "--frozen"], cwd=path)
     if result.returncode != 0:
         console.print(f"[red]✗[/red] Falha ao instalar dependências: {result.stderr}")
         raise SystemExit(1)
@@ -660,7 +660,7 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     # Valida imports
     console.print("[bold cyan]Validando imports de harness_state.*...[/bold cyan]")
-    validation_result = _run([
+    validation_result = run_command([
         sys.executable, "-c",
         ("from harness_state import catalog, sensors, agents; "
         "print('OK')")
