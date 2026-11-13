@@ -3,20 +3,47 @@ name: Spec Guidelines DeepEval Validation
 # Validação das diretrizes normativas via DeepEval (chamadas de LLM).
 #
 # Regra de esteira: as chamadas de LLM acontecem SOMENTE durante a produção
-# de um novo release. Este workflow não dispara por PR — ele é chamado por
-# `tag-code-evaluation.yml` (push de tag v*, workflow_call) e pode ser
-# executado manualmente (workflow_dispatch) quando um release estiver sendo
-# produzido. Nos PRs, a suíte `tests/evals/` se autopula pelo skip guard por
-# env (ausência de endpoint LLM); o que roda em PR são apenas os testes
-# unitários offline (mocks).
+# de um novo release (este workflow é chamado por tag-code-evaluation.yml ou
+# manualmente). A ordem canônica é:
+#   1. fluent-python-eval — o harness de Python Fluente que depende do LLM
+#      (suítes DeepEval das fases 1-4 das specs SPEC-PY-*) roda PRIMEIRO;
+#   2. prompts-eval — validação das diretrizes de prompts/RCA/spec;
+#   e somente então o caller (tag-code-evaluation.yml) dispara o
+#   LLM-as-a-Judge canônico do diff da release.
+# Em PR os jobs não rodam (sem gatilho); as suítes ainda se autopulam por
+# skip guard de env quando executadas sem endpoint LLM.
 
 on:
   workflow_call:
   workflow_dispatch:
 
 jobs:
-  validate-spec:
-    name: "Validacao de Diretrizes de Prompt via DeepEval"
+  fluent-python-eval:
+    name: "Python Fluente via DeepEval (fases 1-4) — ANTES do LLM-as-a-Judge"
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sincronizar Dependencias com uv
+        run: uv sync
+
+      - name: Executar Avaliacao Python Fluente (DeepEval)
+        env:
+          DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+          OPENAI_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OLLAMA_API_KEY || 'ollama' }}
+          LLM_JUDGE_MODEL: ${{ vars.LLM_JUDGE_MODEL }}
+          LLM_JUDGE_FALLBACK_MODEL: ${{ vars.LLM_JUDGE_FALLBACK_MODEL }}
+        run: |
+          uv run pytest \
+            tests/evals/test_fluent_python_phase1.py \
+            tests/evals/test_fluent_python_phase2.py \
+            tests/evals/test_fluent_python_phase3.py \
+            tests/evals/test_fluent_python_phase4.py -v
+
+  prompts-eval:
+    name: "Diretrizes de Prompt/RCA/Spec via DeepEval"
+    needs: fluent-python-eval
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +58,4 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OLLAMA_API_KEY || 'ollama' }}
           LLM_JUDGE_MODEL: ${{ vars.LLM_JUDGE_MODEL }}
           LLM_JUDGE_FALLBACK_MODEL: ${{ vars.LLM_JUDGE_FALLBACK_MODEL }}
-        run: uv run pytest tests/evals/ -v
+        run: uv run pytest tests/evals/test_system_prompts.py -v
