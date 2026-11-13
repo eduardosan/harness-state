@@ -422,9 +422,66 @@ def load_plugins_into(group: click.Group) -> None:
             group.add_command(command, name=name)
 
 
+class PluginLoadingGroup(click.Group):
+    """Grupo Click que monta os plugins `harness.plugins` antes de despachar.
+
+    O binário `harness` é o único ponto de entrada público da plataforma;
+    comandos privados do ecossistema (ex.: `setup`, `spec`, `bug` aportados
+    pelo agentic-flywheel via entry point) precisam ser resolvidos no dispatch
+    real, não apenas quando um chamador invoca `load_plugins_into`
+    manualmente. O click resolve o subcomando por nome ANTES de executar o
+    callback do grupo, por isso a garantia vive em `get_command`/`list_commands`.
+
+    Attributes:
+        plugins_mounted: Marcador de idempotência da montagem dos plugins.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Inicializa o grupo com o marcador de plugins não montados.
+
+        Args:
+            *args: Posicionais repassados a `click.Group`.
+            **kwargs: Nomeados repassados a `click.Group`.
+        """
+        super().__init__(*args, **kwargs)
+        self.plugins_mounted = False
+
+    def ensure_plugins_mounted(self) -> None:
+        """Monta os plugins uma única vez neste grupo (idempotente)."""
+        if self.plugins_mounted:
+            return
+        self.plugins_mounted = True
+        load_plugins_into(self)
+
+    def get_command(
+        self, ctx: click.Context, cmd_name: str
+    ) -> click.Command | None:
+        """Resolve o subcomando garantindo os plugins antes da consulta.
+
+        Args:
+            ctx: Contexto Click corrente.
+            cmd_name: Nome do subcomando solicitado.
+
+        Returns:
+            Comando registrado (núcleo ou plugin) ou None quando inexistente.
+        """
+        self.ensure_plugins_mounted()
+        return super().get_command(ctx, cmd_name)
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        """Lista os subcomandos incluindo os aportados por plugins.
+
+        Args:
+            ctx: Contexto Click corrente.
+
+        Returns:
+            Nomes de comandos em ordem de exibição.
+        """
+        self.ensure_plugins_mounted()
+        return super().list_commands(ctx)
 
 
-@click.group()
+@click.group(cls=PluginLoadingGroup)
 def main() -> None:
     """CLI oficial de gerenciamento de estado da Plataforma SDD (eduardosan)."""
 
