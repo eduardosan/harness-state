@@ -43,7 +43,8 @@ flowchart LR
    calcula as ondas topológicas (`depends_on`) e grava o plano no
    barramento de estado.
 2. **`status`** — consolida o estado corrente de todas as sub-tarefas
-   (PENDING → IN_PROGRESS → READY → APPROVED):
+   (PENDING → IN_PROGRESS → READY → APPROVED/FAILED, sendo `APPROVED` e
+   `FAILED` os estados terminais):
    quem está bloqueado, em qual branch, qual o PR aberto.
 3. **`update`** — registra transições de estado feitas por qualquer
    executor (humano ou agente) durante a execução de uma onda.
