@@ -796,6 +796,56 @@ def aggregate_functional_votes(
     return median_score, is_success, reason
 
 
+def build_single_rule_metric(
+    model: OpenAIModel, rule: str, name: str
+) -> GEval:
+    """Cria uma GEval de diretriz única, à prova de context-blooming em 7B.
+
+    Evidência empírica dos previews: métricas amplas fazem modelos locais
+    pequenos pontuar AUSÊNCIA de demonstração como violação ou virar
+    carimbo total. Esta fábrica fixa o desenho validado nos previews:
+    uma diretriz por métrica, steps que proíbem penalizar o não-requerido
+    e redação explícita de que o snippet pode ter qualquer estrutura
+    (modelos lia "single rule" como "função única").
+
+    Args:
+        model: Instância OpenAIModel apontando ao endpoint do harness.
+        rule: A única diretriz normativa a fiscalizar.
+        name: Nome da métrica (visível no relatório DeepEval).
+
+    Returns:
+        Instância GEval com threshold 0.9 e params input+output.
+    """
+    return GEval(
+        name=name,
+        criteria=(
+            "Assess the code against exactly ONE guideline, stated below. "
+            "Guideline: " + rule + " Judge only compliance with this "
+            "guideline. The size or structure of the code is irrelevant: "
+            "a snippet may contain any number of functions and classes."
+        ),
+        evaluation_steps=[
+            "1. Identify the one guideline stated in the criteria.",
+            "2. Decide whether the code follows or violates that guideline.",
+            (
+                "3. Do not penalize the absence of anything unrelated "
+                "to the guideline; never require the snippet to be a "
+                "single function."
+            ),
+            (
+                "4. Score 1.0 if the guideline is followed; deduct "
+                "points only for a direct violation of it."
+            ),
+        ],
+        evaluation_params=[
+            SingleTurnParams.INPUT,
+            SingleTurnParams.ACTUAL_OUTPUT,
+        ],
+        model=model,
+        threshold=0.9,
+    )
+
+
 def measure_metric_with_majority(
     metric: GEval,
     test_case: LLMTestCase,
