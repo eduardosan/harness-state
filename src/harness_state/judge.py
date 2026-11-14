@@ -796,6 +796,44 @@ def aggregate_functional_votes(
     return median_score, is_success, reason
 
 
+def measure_metric_with_majority(
+    metric: GEval,
+    test_case: LLMTestCase,
+    votes: int = FUNCTIONAL_JUDGE_VOTES,
+) -> tuple[int, bool, str]:
+    """Executa medições GEval reais contra o LLM e agrega por maioria.
+
+    Chamada única em juiz 7B é variável demais para um gate: a mediana do
+    score normalizado e a maioria simples de sucesso filtram votos ruidosos
+    sem alterar o limiar da métrica. É o primitivo compartilhado entre a
+    Etapa 1 do juiz e as suítes de avaliação DeepEval (`tests/evals/`).
+
+    Args:
+        metric: Instância GEval configurada com o modelo do endpoint.
+        test_case: Par (input, actual_output) a avaliar.
+        votes: Número de medições independentes.
+
+    Returns:
+        Tupla (score mediano 0-100, sucesso pela maioria, motivo mediano).
+
+    Raises:
+        ValueError: Se votes < 1.
+    """
+    if votes < 1:
+        raise ValueError("measure_metric_with_majority exige ao menos 1 voto")
+    collected: list[tuple[int, bool, str]] = []
+    for _ in range(votes):
+        metric.measure(test_case)
+        collected.append(
+            (
+                normalize_deepeval_score(metric.score),
+                bool(metric.is_successful()),
+                str(metric.reason or ""),
+            )
+        )
+    return aggregate_functional_votes(collected)
+
+
 def run_judge_metrics_pipeline(
     effective_spec_id: str,
     spec_content: str,
@@ -822,24 +860,24 @@ def run_judge_metrics_pipeline(
     )
     compacted_spec = compact_spec_for_functional_stage(spec_content)
     func_test_case = LLMTestCase(input=compacted_spec, actual_output=compacted_diff)
-    votes: list[tuple[int, bool, str]] = []
+    func_votes: list[tuple[int, bool, str]] = []
     for _ in range(FUNCTIONAL_JUDGE_VOTES):
         functional_metric.measure(func_test_case)
-        votes.append(
+        func_votes.append(
             (
                 normalize_deepeval_score(functional_metric.score),
                 bool(functional_metric.is_successful()),
                 str(functional_metric.reason or ""),
             )
         )
-    func_score, func_success, func_reason = aggregate_functional_votes(votes)
+    func_score, func_success, func_reason = aggregate_functional_votes(func_votes)
     if not func_reason:
         func_reason = "Avaliacao funcional concluida."
 
-    if len(votes) > 1:
+    if len(func_votes) > 1:
         print(
-            f"[Judge Etapa 1] {len(votes)} votos -> score {func_score}/100 "
-            f"(votes={[(v[0], v[1]) for v in votes]})",
+            f"[Judge Etapa 1] {len(func_votes)} votos -> score {func_score}/100 "
+            f"(func_votes={[(v[0], v[1]) for v in func_votes]})",
             file=sys.stderr,
         )
 

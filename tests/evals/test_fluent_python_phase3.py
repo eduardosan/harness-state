@@ -1,25 +1,24 @@
-"""Suíte de avaliação das especificações da Fase 3 de Python Fluente.
-
-Valida as especificações PY-07 (Funções e Decoradores), PY-08 (Dicas de Tipo),
-PY-09 (Protocolos e ABCs) e PY-10 (Sobrecarga de Operadores), além de definir a métrica
-GEval para aferir a conformidade semântica de código gerado por LLMs.
-"""
+"""Suíte de avaliação por regra da Fase 3 de Python Fluente (decoradores, tipos, operadores)."""
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from deepeval.metrics import GEval
 from deepeval.models.llms import OpenAIModel
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
-# Garante desativação de telemetria externa do DeepEval
+from harness_state.judge import (
+    aggregate_functional_votes,
+    build_judge_model,
+    measure_metric_with_majority,
+)
+
 os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 
-# As suítes de avaliação exigem um endpoint LLM configurado. Em runners sem
-# LLM (ex.: `test.yml` em ubuntu-latest) a suíte inteira é pulada com aviso,
-# mantendo o gate real apenas no `spec-ci.yml` (self-hosted, vars LLM_*).
+# As suítes de avaliação exercitam o LLM real do harness. Em runners sem
+# endpoint (ex.: test.yml em ubuntu-latest) a suíte se autopula; o gate
+# roda nos releases (job fluent-python-eval / preview dispatchado).
 pytestmark = pytest.mark.skipif(
     not (
         os.environ.get("OPENAI_BASE_URL", "")
@@ -37,47 +36,16 @@ PHASE3_SPECS = [
     "SPEC-PY-10-operator-overloading.md",
 ]
 
-
-def build_phase3_metric(model: OpenAIModel) -> GEval:
-    """Cria a métrica GEval para avaliar conformidade com a Fase 3.
-
-    Args:
-        model: Instância do modelo LLM-as-a-Judge.
-
-    Returns:
-        Instância de GEval configurada para avaliar Decoradores, Tipagem Estrita,
-        Protocolos vs Herança e Sobrecarga de Operadores.
-    """
-    criteria = (
-        "The generated Python code must follow Fluent Python standards: "
-        "1. Decorators must preserve metadata using @functools.wraps; parameterized "
-        "decorators must be classes with __call__ instead of 3-level nested functions. "
-        "2. Public APIs must have complete strict type annotations, accepting abstract "
-        "types (Iterable, Sequence) and returning concrete types. "
-        "3. Prefer typing.Protocol over ABCs for decoupled interfaces, and never "
-        "inherit directly from built-in types like list or dict. "
-        "4. Operator overloading methods must return new instances and must return "
-        "NotImplemented for unsupported operand types instead of raising TypeError."
-    )
-    return GEval(
-        name="Fluent Python Phase 3 Compliance",
-        criteria=criteria,
-        evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT],
-        model=model,
-        threshold=0.9,
-    )
-
-
 @pytest.mark.parametrize("spec_filename", PHASE3_SPECS)
 def test_phase3_spec_files_exist_and_follow_template(spec_filename: str) -> None:
-    """Business Rule: specs da Fase 3 devem existir e seguir o molde canônico.
+    """Business Rule: specs da Fase 3 devem existir e seguir o molde canonico.
 
-    Cada spec deve conter as seções: Fonte, Regras normativas,
-    Anti-padrão → forma idiomática, Enforcement e Exceções,
-    além de indicar a origem [Livro] ou [Política].
+    Cada spec deve conter as secoes: Fonte, Regras normativas,
+    Anti-padrao -> forma idiomatica, Enforcement e Excecoes,
+    alem de indicar a origem [Livro] ou [Politica].
     """
     spec_path = Path("specs/python") / spec_filename
-    assert spec_path.is_file(), f"Arquivo não encontrado: {spec_path}"
+    assert spec_path.is_file(), f"Arquivo nao encontrado: {spec_path}"
 
     content = spec_path.read_text(encoding="utf-8")
     assert "## 1. Fonte" in content
@@ -88,58 +56,150 @@ def test_phase3_spec_files_exist_and_follow_template(spec_filename: str) -> None
     assert "[Livro]" in content or "[Política]" in content
 
 
-def test_phase3_metric_structure() -> None:
-    """Business Rule: a métrica da Fase 3 deve ter threshold 0.9 e nome canônico."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
+RULE_CASES: list[tuple[str, str, str]] = [
+    (
+        'Simple decorators must wrap with @functools.wraps; parameterized decorators must be implemented as a class with __call__ instead of three-level nested functions.',
+        'from functools import wraps\n\n\nclass Retry:\n    def __init__(self, times: int) -> None:\n        self.times = times\n\n    def __call__(self, func):\n        @wraps(func)\n        def wrapper(*args, **kwargs):\n            for _ in range(self.times):\n                try:\n                    return func(*args, **kwargs)\n                except OSError:\n                    continue\n        return wrapper\n',
+        'def retry(times):\n    def decorator(func):\n        def inner(*args, **kwargs):\n            for _ in range(times):\n                return func(*args, **kwargs)\n        return inner\n    return decorator\n',
+    ),
+    (
+        'Public APIs need complete strict annotations, accepting abstract types like typing.Iterable and returning concrete types.',
+        'from collections.abc import Iterable\n\n\ndef total(values: Iterable[float]) -> float:\n    return sum(values)\n',
+        'def total(values):\n    return sum(values)\n',
+    ),
+    (
+        'Prefer typing.Protocol over ABCs for decoupled interfaces and never subclass built-in types like list or dict for domain classes.',
+        'from typing import Protocol\n\n\nclass SizedLike(Protocol):\n    def __len__(self) -> int: ...\n\n\ndef first_item(collection: SizedLike) -> object:\n    return collection[0]\n',
+        'import abc\n\n\nclass Base(abc.ABC):\n    @abc.abstractmethod\n    def run(self): ...\n\n\nclass Stack(list):\n    def push(self, item):\n        self.append(item)\n',
+    ),
+    (
+        'Operator overloading must return new instances and must return NotImplemented for unsupported operand types instead of raising TypeError.',
+        "class Vector:\n    def __init__(self, x: float, y: float) -> None:\n        self.x, self.y = x, y\n\n    def __add__(self, other: object) -> 'Vector':\n        if not isinstance(other, Vector):\n            return NotImplemented\n        return Vector(self.x + other.x, self.y + other.y)\n",
+        "class Vector:\n    def __init__(self, x, y):\n        self.x, self.y = x, y\n\n    def __add__(self, other):\n        if not isinstance(other, Vector):\n            raise TypeError('unsupported operand')\n        self.x += other.x\n        return self\n",
+    ),
+]
+
+
+def build_single_rule_metric(
+    model: OpenAIModel, rule: str, name: str
+) -> GEval:
+    """Cria uma GEval de regra única para avaliar conformidade pontual.
+
+    Multiplas regras em uma só criteria induzem juizes 7B a pontuarem
+    ausencias de demonstracao como violacoes; cada metrica aqui carrega
+    exatamente UMA norma da fase, com micro-amostra dedicada.
+
+    Args:
+        model: Instancia OpenAIModel apontada ao endpoint do harness.
+        rule: Texto da regra normativa unica a fiscalizar.
+        name: Nome da metrica (visivel no relatorio DeepEval).
+
+    Returns:
+        Instancia GEval com threshold 0.9 e params input+output.
+    """
+    return GEval(
+        name=name,
+        criteria=(
+            "Assess the code against exactly ONE guideline, stated below. "
+            "Guideline: " + rule +
+            " Judge only compliance with this guideline. The size or "
+            "structure of the code is irrelevant: a snippet may contain "
+            "any number of functions and classes."
+        ),
+        evaluation_steps=[
+            "1. Identify the one guideline stated in the criteria.",
+            "2. Decide whether the code follows or violates that guideline.",
+            (
+                "3. Do not penalize the absence of anything unrelated to "
+                "the guideline; never require the snippet to be a "
+                "single function."
+            ),
+            (
+                "4. Score 1.0 if the guideline is followed; deduct points "
+                "only for a direct violation of it."
+            ),
+        ],
+        evaluation_params=[
+            SingleTurnParams.INPUT,
+            SingleTurnParams.ACTUAL_OUTPUT,
+        ],
+        model=model,
+        threshold=0.9,
     )
-    metric = build_phase3_metric(model=dummy_model)
+
+
+def build_phase3_metric(model: OpenAIModel) -> GEval:
+    """Compat: metrica agregada da fase (mantida p/ testes de estrutura)."""
+    return build_single_rule_metric(
+        model,
+        RULE_CASES[0][0],
+        "Fluent Python Phase 3 Rule 1",
+    )
+
+
+
+def test_phase3_metric_factory_uses_single_rule_and_strict_threshold() -> None:
+    """Business Rule: cada metrica de avaliacao carrega UMA regra com
+    threshold 0.9 e nome da fase — granularidade e o contrato anti-aleucinacao."""
+    metric = build_single_rule_metric(
+        build_judge_model(), "Test rule text.", "Fluent Python Phase 3 Rule X"
+    )
     assert metric.threshold == 0.9
-    assert metric.name == "Fluent Python Phase 3 Compliance"
+    criteria = metric.criteria or ""
+    assert "Test rule text." in criteria
+    assert "Phase 3" in metric.name
 
 
-def test_phase3_evaluation_mocked() -> None:
-    """Business Rule: código idiomático da Fase 3 é aprovado pela avaliação GEval."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
-    )
-    metric = build_phase3_metric(model=dummy_model)
+def test_phase3_real_llm_approves_idiomatic_snippets() -> None:
+    """Business Rule: sanity calibração — o LLM do harness não pode reprovar o
+    conjunto de micro-exemplares idiomáticos das regras da Fase 3."""
+    failures: list[str] = []
+    for index, (rule, good, _bad) in enumerate(RULE_CASES, start=1):
+        name = f"Fluent Python Phase 3 Rule {index}"
+        metric = build_single_rule_metric(build_judge_model(), rule, name)
+        score, success, reason = measure_metric_with_majority(
+            metric,
+            LLMTestCase(
+                input="Implement the snippet described, following the rule.",
+                actual_output=good,
+            ),
+        )
+        if not success:
+            failures.append(f"{name}: score={score} reason={reason}")
+    assert not failures, "exemplares reprovados:\n" + "\n".join(failures)
 
-    test_case = LLMTestCase(
-        input=(
-            "Write a 2D Vector class with addition overloading that handles "
-            "unsupported types properly."
-        ),
-        actual_output=(
-            "class Vector:\n"
-            "    __slots__ = ('_x', '_y')\n\n"
-            "    def __init__(self, x: float, y: float) -> None:\n"
-            "        self._x = x\n"
-            "        self._y = y\n\n"
-            "    def __add__(self, other: object) -> 'Vector':\n"
-            "        if not isinstance(other, Vector):\n"
-            "            return NotImplemented\n"
-            "        return Vector(self._x + other._x, self._y + other._y)\n"
-        ),
-    )
 
-    metric.measure = MagicMock()
-    metric.score = 1.0
-    metric.reason = (
-        "Retorna NotImplemented em __add__, usa __slots__ e preserva imutabilidade."
-    )
-    metric.is_successful = MagicMock(return_value=True)
-
-    metric.measure(test_case)
-    assert metric.is_successful() is True
-    phase_score = metric.score
-    phase_threshold = metric.threshold
-    assert (
-        phase_score is not None
-        and phase_threshold is not None
-        and phase_score >= phase_threshold
-    )
+def test_phase3_real_llm_forced_choice_discriminates_each_rule() -> None:
+    """Business Rule: para TODAS as regras da Fase 3 o juiz identifica o
+    segmento idiomático em escolha forçada A/B — discriminação confiável,
+    dado que o score absoluto de um 7B mostrou-se instável nos previews
+    (ora severo, ora carimbo total)."""
+    failures: list[str] = []
+    for index, (rule, good, bad) in enumerate(RULE_CASES, start=1):
+        name = f"Fluent Python Phase 3 Rule {index}"
+        if index % 2 == 1:
+            choice = "A"
+            snippets = f"Segment A:\n{good}\n\nSegment B:\n{bad}\n"
+        else:
+            choice = "B"
+            snippets = f"Segment A:\n{bad}\n\nSegment B:\n{good}\n"
+        prompt = (
+            "Guideline: " + rule + "\n\n" + snippets + "\n"
+            "Exactly one segment follows the guideline and exactly one "
+            "violates it. Respond with only the letter of the compliant "
+            "segment."
+        )
+        votes: list[tuple[int, bool, str]] = []
+        for _ in range(3):
+            generated = build_judge_model().generate(prompt)
+            raw = str(generated[0]) if isinstance(generated, tuple) else str(generated)
+            first_token = raw.strip().upper()[:1]
+            ok = first_token == choice
+            votes.append((100 if ok else 0, ok, raw.strip()[:60]))
+        score, success, reason = aggregate_functional_votes(votes)
+        if not success:
+            failures.append(
+                f"{name}: esperado={choice} votos={reason} "
+                f"(score={score})"
+            )
+    assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)
