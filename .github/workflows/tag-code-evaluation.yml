@@ -42,13 +42,20 @@ concurrency:
   group: state-tag-evaluation-${{ github.ref_name }}
   cancel-in-progress: false
 
+# Ordem canônica das chamadas de LLM na produção do release:
+#   1. guidelines-eval  -> workflow chamado spec-ci.yml, cujo PRIMEIRO job é
+#      fluent-python-eval (harness de Python Fluente que depende do LLM,
+#      DeepEval das fases 1-4), seguido de prompts-eval (diretrizes);
+#   2. evaluate-tag-release -> LLM-as-a-Judge canônico do diff da release,
+#      que só roda com a etapa 1 verde (needs).
 jobs:
   guidelines-eval:
-    name: "Autoavaliação das Diretrizes (DeepEval)"
+    name: "Autoavaliação Python Fluente + Diretrizes (DeepEval)"
     uses: ./.github/workflows/spec-ci.yml
+    secrets: inherit
 
   evaluate-tag-release:
-    name: "Autoavaliação Canônica da Release (Tag)"
+    name: "LLM-as-a-Judge Canônico da Release (Tag)"
     needs: guidelines-eval
     runs-on: self-hosted
     timeout-minutes: 30
