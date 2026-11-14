@@ -329,6 +329,33 @@ def test_fluent_metric_excludes_evaluation_harness_classes() -> None:
     assert "evaluation judges" in criteria
 
 
+def test_battery_is_a_cohesive_container_model() -> None:
+    """Business Rule: FunctionalRuleBattery agrega dados relacionais (as regras
+    e o veredito), logo expoe os metodos especiais do Python Data Model
+    (__len__, __iter__, __getitem__, __contains__, __repr__) conforme AGENTS.md
+    5.1 / SPEC-PY-01 — cobranca recebida nos previews 43633346713 e
+    43634495005 era desvio legitimo de estilo da casa, nao hallucinacao: as
+    isencoes fluentes so cobrem classes utilitarias puras."""
+    from harness_state.judge import FunctionalRuleBattery
+
+    rules = [
+        BatteryRuleFake("R1", [0.95] * 3, [True] * 3),
+        BatteryRuleFake("R2", [0.95] * 3, [True] * 3),
+    ]
+    battery = FunctionalRuleBattery(rules=rules)
+
+    assert len(battery) == 2
+    assert list(battery) == rules
+    assert battery[1] is rules[1]
+    assert rules[0] in battery
+    assert "anything-else" not in battery
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    representation = repr(battery)
+    assert "FunctionalRuleBattery" in representation
+    assert "2" in representation
+    assert battery.is_approved is True
+
+
 def test_vote_retries_only_measurement_json_error() -> None:
     """Business Rule: um voto com JSON invalido do juiz e falha do MEDIDOR,
     nao veredito de conformidade: o voto e re-tentado; rejeicoes validas

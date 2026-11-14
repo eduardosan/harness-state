@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -290,6 +291,34 @@ class FunctionalRuleBattery:
             Sucesso consolidado da bateria.
         """
         return self._ok
+
+    @property
+    def is_approved(self) -> bool:
+        """Propriedade computada do veredito (estilo de modelo coeso)."""
+        return self._ok
+
+    def __len__(self) -> int:
+        """Retorna a quantidade de regras na bateria."""
+        return len(self.rules)
+
+    def __iter__(self) -> Iterator[Any]:
+        """Itera as metricas de regra unica na ordem fiscalizada."""
+        return iter(self.rules)
+
+    def __getitem__(self, index: int) -> Any:
+        """Retorna a metrica de regra na posicao indicada."""
+        return self.rules[index]
+
+    def __contains__(self, item: object) -> bool:
+        """Indica se a metrica pertence a esta bateria (identidade ou igualdade)."""
+        return any(rule is item or rule == item for rule in self.rules)
+
+    def __repr__(self) -> str:
+        """Retorna representacao canônica com o estado do veredito."""
+        return (
+            f"FunctionalRuleBattery(rules={len(self.rules)}, "
+            f"approved={self._ok}, score={self.score:.2f})"
+        )
 
 
 def build_gate_metric(model: OpenAIModel) -> FunctionalRuleBattery:
