@@ -185,7 +185,8 @@ def test_phase1_real_llm_forced_choice_discriminates_each_rule() -> None:
         )
         votes: list[tuple[int, bool, str]] = []
         for _ in range(3):
-            raw = build_judge_model().generate(prompt) or ""
+            generated = build_judge_model().generate(prompt)
+            raw = str(generated[0]) if isinstance(generated, tuple) else str(generated)
             first_token = raw.strip().upper()[:1]
             ok = first_token == choice
             votes.append((100 if ok else 0, ok, raw.strip()[:60]))
