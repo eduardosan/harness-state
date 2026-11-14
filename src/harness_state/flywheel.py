@@ -24,7 +24,7 @@ description = "Flywheel Execution Engine - {name}"
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [
-    {{ name = "Eduardo F. Santos", email = "eduardo@for.mat.br" }}
+    {{ name = "Seu Nome", email = "voce@example.com" }}
 ]
 dependencies = [
     "agentic-flywheel=={agentic_version}",

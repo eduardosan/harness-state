@@ -8,7 +8,7 @@ Este documento estabelece as diretrizes obrigatórias e os padrões de operaçã
 
 O **`harness-state`** é o cliente e CLI oficial de State Tracking para a plataforma de Spec-Driven Development (SDD) federada (`eduardosan`).
 
-Sua função é gerenciar o ciclo de vida e a sincronização do estado de especificações globais (`SpecRun`), suas sub-tarefas distribuídas entre múltiplos repositórios (`SubTask`) e os estados de execução (`TaskState`) persistidos no barramento central Redis (hospedado no Proxmox).
+Sua função é gerenciar o ciclo de vida e a sincronização do estado de especificações globais (`SpecRun`), suas sub-tarefas distribuídas entre múltiplos repositórios (`SubTask`) e os estados de execução (`TaskState`) persistidos no barramento central Redis (infraestrutura privada do ecossistema; valores reais ficam fora deste repo).
 
 ---
 
@@ -87,8 +87,8 @@ uv run ruff check --fix .
 uv run isort .
 ```
 
-### 4.3. Túnel SSH para o Redis Central (Proxmox)
-Para testes ou comandos que dependam de comunicação com o Redis central (`192.168.20.5:6379`), utilize as metas do `Makefile`:
+### 4.3. Túnel SSH para o Redis Central
+Para testes ou comandos que dependam de comunicação com o Redis central (`{{REDIS_HOST}}:6379`), configure `local.mk` (não versionado; veja `local.mk.example`) e utilize as metas do `Makefile`:
 ```bash
 # Iniciar o túnel SSH em background
 make tunnel
