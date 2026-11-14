@@ -103,45 +103,93 @@ def test_phase3_metric_structure() -> None:
     assert metric.name == "Fluent Python Phase 3 Compliance"
 
 
+IDIOMATIC_SAMPLE = """from collections.abc import Iterable
+from functools import wraps
+from typing import Protocol
+
+
+class SizedLike(Protocol):
+    def __len__(self) -> int: ...
+
+
+class Vector:
+    def __init__(self, x: float, y: float) -> None:
+        self.x, self.y = x, y
+
+    def __add__(self, other: object) -> "Vector":
+        if not isinstance(other, Vector):
+            return NotImplemented
+        return Vector(self.x + other.x, self.y + other.y)
+
+
+def timed(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Retry:
+    def __init__(self, times: int) -> None:
+        self.times = times
+
+    def __call__(self, func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for _ in range(self.times):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+
+def total(values: Iterable[float]) -> float:
+    return sum(values)"""
+
+ANTI_PATTERN_SAMPLE = """def retry(times):
+    def decorator(func):
+        def inner(*args, **kwargs):
+            for _ in range(times):
+                return func(*args, **kwargs)
+        return inner
+    return decorator
+
+
+class Stack(list):
+    def push(self, item):
+        self.append(item)
+
+    def __add__(self, other):
+        raise TypeError("unsupported")"""
+
 def test_phase3_real_llm_approves_idiomatic_sample() -> None:
-    """Business Rule: o LLM do harness avalia de verdade o código idiomático da
-    Fase 3 e o aprova por maioria de 3 votos no endpoint configurado."""
-    model = build_judge_model()
-    metric = build_phase3_metric(model=model)
+    """Business Rule: o LLM do harness avalia de verdade o código-exemplar da
+    Fase 3 (todas as regras da métrica presentes) e o aprova por maioria."""
+    metric = build_phase3_metric(model=build_judge_model())
     case = LLMTestCase(
-        input="vector addition operator and a parameterized retry decorator.",
-        actual_output=(
-            "from collections.abc import Iterable\n\nclass Vector:\n    def __init__(self, x: float, y: float) -> None:\n        self.x, self.y = x, y\n\n    def __add__(self, other: object) -> 'Vector':\n        if not isinstance(other, Vector):\n            return NotImplemented\n        return Vector(self.x + other.x, self.y + other.y)\n\n    @staticmethod\n    def total(values: Iterable[float]) -> float:\n        return sum(values)\n"
-        ),
+        input="Implement vector addition, a timing decorator that preserves metadata, a parameterized retry decorator and a decoupled sized protocol with strict annotations.",
+        actual_output=IDIOMATIC_SAMPLE,
     )
 
     score, success, reason = measure_metric_with_majority(metric, case)
-    assert success, f"juiz rejeitou código idiomático: score={score} reason={reason}"
+    assert success, f"juiz rejeitou código-exemplar: score={score} reason={reason}"
     assert score >= int((metric.threshold or 0.9) * 100)
     assert reason
 
 
 def test_phase3_real_llm_discriminates_anti_pattern() -> None:
-    """Business Rule: o mesmo juiz marca nota estritamente menor no anti-padrão
-    da Fase 3 — a avaliação exercita o LLM e prova discriminação, não carimbo."""
-    model = build_judge_model()
-    metric_good = build_phase3_metric(model=model)
-    metric_bad = build_phase3_metric(model=model)
-    good = LLMTestCase(
-        input="vector addition operator and a parameterized retry decorator.",
-        actual_output=(
-            "from collections.abc import Iterable\n\nclass Vector:\n    def __init__(self, x: float, y: float) -> None:\n        self.x, self.y = x, y\n\n    def __add__(self, other: object) -> 'Vector':\n        if not isinstance(other, Vector):\n            return NotImplemented\n        return Vector(self.x + other.x, self.y + other.y)\n\n    @staticmethod\n    def total(values: Iterable[float]) -> float:\n        return sum(values)\n"
-        ),
-    )
-    bad = LLMTestCase(
-        input="vector addition operator and a parameterized retry decorator.",
-        actual_output=(
-            "def retry(times):\n    def decorator(func):\n        def inner(*args, **kwargs):\n            for _ in range(times):\n                return func(*args, **kwargs)\n        return inner\n    return decorator\n\nclass Stack(list):\n    def push(self, item):\n        self.append(item)\n"
-        ),
-    )
+    """Business Rule: o mesmo juiz dá score estritamente menor ao anti-padrão
+    da Fase 3 — a avaliação exercita o LLM e prova discriminação real."""
+    case_input = "Implement vector addition, a timing decorator that preserves metadata, a parameterized retry decorator and a decoupled sized protocol with strict annotations."
+    metric_good = build_phase3_metric(model=build_judge_model())
+    metric_bad = build_phase3_metric(model=build_judge_model())
 
-    score_good, _, _ = measure_metric_with_majority(metric_good, good)
-    score_bad, _, _ = measure_metric_with_majority(metric_bad, bad)
+    score_good, _, _ = measure_metric_with_majority(
+        metric_good, LLMTestCase(input=case_input, actual_output=IDIOMATIC_SAMPLE)
+    )
+    score_bad, _, _ = measure_metric_with_majority(
+        metric_bad, LLMTestCase(input=case_input, actual_output=ANTI_PATTERN_SAMPLE)
+    )
     assert score_bad < score_good, (
         f"juiz não discriminou o anti-padrão: bom={score_good} ruim={score_bad}"
     )

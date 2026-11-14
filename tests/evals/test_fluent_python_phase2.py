@@ -105,45 +105,59 @@ def test_phase2_metric_structure() -> None:
     assert metric.name == "Fluent Python Phase 2 Compliance"
 
 
+IDIOMATIC_SAMPLE = """from collections import defaultdict
+from collections.abc import Iterator
+from pathlib import Path
+
+
+def group_first_column(paths: list[Path]) -> dict[str, list[str]]:
+    buckets: dict[str, list[str]] = defaultdict(list)
+
+    def rows() -> Iterator[str]:
+        for path in paths:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        yield line.strip()
+
+    for row in rows():
+        key = row.split(",")[0]
+        buckets.setdefault(key, []).append(row)
+    return dict(buckets)"""
+
+ANTI_PATTERN_SAMPLE = """def group_first_column(paths):
+    data = "".join(open(p).read() for p in paths)
+    rows = data.splitlines()
+    return list(filter(lambda r: r, map(lambda r: r.split(",")[0], rows)))"""
+
 def test_phase2_real_llm_approves_idiomatic_sample() -> None:
-    """Business Rule: o LLM do harness avalia de verdade o código idiomático da
-    Fase 2 e o aprova por maioria de 3 votos no endpoint configurado."""
-    model = build_judge_model()
-    metric = build_phase2_metric(model=model)
+    """Business Rule: o LLM do harness avalia de verdade o código-exemplar da
+    Fase 2 (todas as regras da métrica presentes) e o aprova por maioria."""
+    metric = build_phase2_metric(model=build_judge_model())
     case = LLMTestCase(
-        input="extract first column values from a CSV text file.",
-        actual_output=(
-            "from pathlib import Path\n\ndef names(path: Path) -> list[str]:\n    with path.open(encoding=\"utf-8\") as handle:\n        return [line.split(',')[0] for line in handle if line.strip()]\n"
-        ),
+        input="Group CSV rows by their first column without loading whole files in memory.",
+        actual_output=IDIOMATIC_SAMPLE,
     )
 
     score, success, reason = measure_metric_with_majority(metric, case)
-    assert success, f"juiz rejeitou código idiomático: score={score} reason={reason}"
+    assert success, f"juiz rejeitou código-exemplar: score={score} reason={reason}"
     assert score >= int((metric.threshold or 0.9) * 100)
     assert reason
 
 
 def test_phase2_real_llm_discriminates_anti_pattern() -> None:
-    """Business Rule: o mesmo juiz marca nota estritamente menor no anti-padrão
-    da Fase 2 — a avaliação exercita o LLM e prova discriminação, não carimbo."""
-    model = build_judge_model()
-    metric_good = build_phase2_metric(model=model)
-    metric_bad = build_phase2_metric(model=model)
-    good = LLMTestCase(
-        input="extract first column values from a CSV text file.",
-        actual_output=(
-            "from pathlib import Path\n\ndef names(path: Path) -> list[str]:\n    with path.open(encoding=\"utf-8\") as handle:\n        return [line.split(',')[0] for line in handle if line.strip()]\n"
-        ),
-    )
-    bad = LLMTestCase(
-        input="extract first column values from a CSV text file.",
-        actual_output=(
-            "def names(path):\n    data = open(path).read()\n    return list(filter(lambda line: line, map(lambda l: l.split(\",\")[0], data.splitlines())))\n"
-        ),
-    )
+    """Business Rule: o mesmo juiz dá score estritamente menor ao anti-padrão
+    da Fase 2 — a avaliação exercita o LLM e prova discriminação real."""
+    case_input = "Group CSV rows by their first column without loading whole files in memory."
+    metric_good = build_phase2_metric(model=build_judge_model())
+    metric_bad = build_phase2_metric(model=build_judge_model())
 
-    score_good, _, _ = measure_metric_with_majority(metric_good, good)
-    score_bad, _, _ = measure_metric_with_majority(metric_bad, bad)
+    score_good, _, _ = measure_metric_with_majority(
+        metric_good, LLMTestCase(input=case_input, actual_output=IDIOMATIC_SAMPLE)
+    )
+    score_bad, _, _ = measure_metric_with_majority(
+        metric_bad, LLMTestCase(input=case_input, actual_output=ANTI_PATTERN_SAMPLE)
+    )
     assert score_bad < score_good, (
         f"juiz não discriminou o anti-padrão: bom={score_good} ruim={score_bad}"
     )

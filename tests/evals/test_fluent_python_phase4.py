@@ -101,45 +101,95 @@ def test_phase4_metric_structure() -> None:
     assert metric.name == "Fluent Python Phase 4 Compliance"
 
 
+IDIOMATIC_SAMPLE = """import asyncio
+from concurrent.futures import ProcessPoolExecutor
+
+
+class Positive:
+    def __set_name__(self, owner, name):
+        self.name = f"_{name}"
+
+    def __get__(self, obj, objtype=None):
+        return getattr(obj, self.name, None)
+
+    def __set__(self, obj, value):
+        if value <= 0:
+            raise ValueError("must be positive")
+        setattr(obj, self.name, value)
+
+
+class Connection:
+    port = Positive()
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+    @property
+    def timeout(self) -> float:
+        return 10.0
+
+
+async def fetch_all(urls: list[str]) -> list[str]:
+    async with asyncio.timeout(10), asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(fetch(url)) for url in urls]
+    return [task.result() for task in tasks]
+
+
+def hash_files(paths: list[str]) -> list[str]:
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(hash_file, paths))"""
+
+ANTI_PATTERN_SAMPLE = """import time
+
+
+async def fetch_all(urls):
+    out = []
+    for url in urls:
+        time.sleep(1)
+        out.append(fetch(url))
+    return out
+
+
+class Config:
+    def get_port(self):
+        return self._port
+
+    def set_port(self, value):
+        self._port = value
+
+
+class Registry(type):
+    def __new__(mcls, name, bases, ns):
+        return super().__new__(mcls, name, bases, ns)"""
+
 def test_phase4_real_llm_approves_idiomatic_sample() -> None:
-    """Business Rule: o LLM do harness avalia de verdade o código idiomático da
-    Fase 4 e o aprova por maioria de 3 votos no endpoint configurado."""
-    model = build_judge_model()
-    metric = build_phase4_metric(model=model)
+    """Business Rule: o LLM do harness avalia de verdade o código-exemplar da
+    Fase 4 (todas as regras da métrica presentes) e o aprova por maioria."""
+    metric = build_phase4_metric(model=build_judge_model())
     case = LLMTestCase(
-        input="concurrent URL fetching with structured concurrency.",
-        actual_output=(
-            "import asyncio\n\nasync def fetch_all(urls: list[str]) -> dict[str, str]:\n    results: dict[str, str] = {}\n    async with asyncio.TaskGroup() as tg, asyncio.timeout(10):\n        tasks = {url: tg.create_task(fetch(url)) for url in urls}\n    for url, task in tasks.items():\n        results[url] = task.result()\n    return results\n"
-        ),
+        input="Fetch URLs concurrently with structured concurrency, hash CPU-bound files with the right pool, validate ports with a reusable descriptor and derive subclasses without a metaclass.",
+        actual_output=IDIOMATIC_SAMPLE,
     )
 
     score, success, reason = measure_metric_with_majority(metric, case)
-    assert success, f"juiz rejeitou código idiomático: score={score} reason={reason}"
+    assert success, f"juiz rejeitou código-exemplar: score={score} reason={reason}"
     assert score >= int((metric.threshold or 0.9) * 100)
     assert reason
 
 
 def test_phase4_real_llm_discriminates_anti_pattern() -> None:
-    """Business Rule: o mesmo juiz marca nota estritamente menor no anti-padrão
-    da Fase 4 — a avaliação exercita o LLM e prova discriminação, não carimbo."""
-    model = build_judge_model()
-    metric_good = build_phase4_metric(model=model)
-    metric_bad = build_phase4_metric(model=model)
-    good = LLMTestCase(
-        input="concurrent URL fetching with structured concurrency.",
-        actual_output=(
-            "import asyncio\n\nasync def fetch_all(urls: list[str]) -> dict[str, str]:\n    results: dict[str, str] = {}\n    async with asyncio.TaskGroup() as tg, asyncio.timeout(10):\n        tasks = {url: tg.create_task(fetch(url)) for url in urls}\n    for url, task in tasks.items():\n        results[url] = task.result()\n    return results\n"
-        ),
-    )
-    bad = LLMTestCase(
-        input="concurrent URL fetching with structured concurrency.",
-        actual_output=(
-            "import time\n\nasync def fetch_all(urls):\n    out = []\n    for url in urls:\n        time.sleep(1)\n        out.append(fetch(url))\n    return out\n\nclass Config:\n    def get_port(self): return self._port\n    def set_port(self, value): self._port = value\n"
-        ),
-    )
+    """Business Rule: o mesmo juiz dá score estritamente menor ao anti-padrão
+    da Fase 4 — a avaliação exercita o LLM e prova discriminação real."""
+    case_input = "Fetch URLs concurrently with structured concurrency, hash CPU-bound files with the right pool, validate ports with a reusable descriptor and derive subclasses without a metaclass."
+    metric_good = build_phase4_metric(model=build_judge_model())
+    metric_bad = build_phase4_metric(model=build_judge_model())
 
-    score_good, _, _ = measure_metric_with_majority(metric_good, good)
-    score_bad, _, _ = measure_metric_with_majority(metric_bad, bad)
+    score_good, _, _ = measure_metric_with_majority(
+        metric_good, LLMTestCase(input=case_input, actual_output=IDIOMATIC_SAMPLE)
+    )
+    score_bad, _, _ = measure_metric_with_majority(
+        metric_bad, LLMTestCase(input=case_input, actual_output=ANTI_PATTERN_SAMPLE)
+    )
     assert score_bad < score_good, (
         f"juiz não discriminou o anti-padrão: bom={score_good} ruim={score_bad}"
     )

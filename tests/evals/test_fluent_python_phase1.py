@@ -99,45 +99,62 @@ def test_phase1_metric_structure() -> None:
     assert metric.name == "Fluent Python Phase 1 Compliance"
 
 
+IDIOMATIC_SAMPLE = """from dataclasses import dataclass, field
+
+
+@dataclass(slots=True, kw_only=True)
+class Customer:
+    id: int
+    name: str
+    orders: list[str] = field(default_factory=list)
+    notes: list[str] | None = None
+
+    def add_order(self, order_id: str) -> None:
+        self.orders.append(order_id)
+
+    def __len__(self) -> int:
+        return len(self.orders)
+
+    def __repr__(self) -> str:
+        return f"Customer(id={self.id}, orders={len(self.orders)})"
+
+
+def collect(items: list[str] | None = None) -> list[str]:
+    return list(items) if items is not None else []"""
+
+ANTI_PATTERN_SAMPLE = """class Order(dict):
+    def __init__(self, items=[], total=0):
+        self.items = items
+        self.total = total"""
+
 def test_phase1_real_llm_approves_idiomatic_sample() -> None:
-    """Business Rule: o LLM do harness avalia de verdade o código idiomático da
-    Fase 1 e o aprova por maioria de 3 votos no endpoint configurado."""
-    model = build_judge_model()
-    metric = build_phase1_metric(model=model)
+    """Business Rule: o LLM do harness avalia de verdade o código-exemplar da
+    Fase 1 (todas as regras da métrica presentes) e o aprova por maioria."""
+    metric = build_phase1_metric(model=build_judge_model())
     case = LLMTestCase(
-        input="customer class with an order list and add_order method.",
-        actual_output=(
-            "from dataclasses import dataclass, field\n\n@dataclass(slots=True, kw_only=True)\nclass Customer:\n    id: int\n    name: str\n    orders: list[str] = field(default_factory=list)\n\n    def add_order(self, order_id: str) -> None:\n        self.orders.append(order_id)\n\n    def __len__(self) -> int:\n        return len(self.orders)\n"
-        ),
+        input="Create a Customer dataclass with an orders collection, a safe add_order API, no mutable default arguments, and a length dunder.",
+        actual_output=IDIOMATIC_SAMPLE,
     )
 
     score, success, reason = measure_metric_with_majority(metric, case)
-    assert success, f"juiz rejeitou código idiomático: score={score} reason={reason}"
+    assert success, f"juiz rejeitou código-exemplar: score={score} reason={reason}"
     assert score >= int((metric.threshold or 0.9) * 100)
     assert reason
 
 
 def test_phase1_real_llm_discriminates_anti_pattern() -> None:
-    """Business Rule: o mesmo juiz marca nota estritamente menor no anti-padrão
-    da Fase 1 — a avaliação exercita o LLM e prova discriminação, não carimbo."""
-    model = build_judge_model()
-    metric_good = build_phase1_metric(model=model)
-    metric_bad = build_phase1_metric(model=model)
-    good = LLMTestCase(
-        input="customer class with an order list and add_order method.",
-        actual_output=(
-            "from dataclasses import dataclass, field\n\n@dataclass(slots=True, kw_only=True)\nclass Customer:\n    id: int\n    name: str\n    orders: list[str] = field(default_factory=list)\n\n    def add_order(self, order_id: str) -> None:\n        self.orders.append(order_id)\n\n    def __len__(self) -> int:\n        return len(self.orders)\n"
-        ),
-    )
-    bad = LLMTestCase(
-        input="customer class with an order list and add_order method.",
-        actual_output=(
-            "class Order(dict):\n    def __init__(self, items=[]):\n        self.items = items\n"
-        ),
-    )
+    """Business Rule: o mesmo juiz dá score estritamente menor ao anti-padrão
+    da Fase 1 — a avaliação exercita o LLM e prova discriminação real."""
+    case_input = "Create a Customer dataclass with an orders collection, a safe add_order API, no mutable default arguments, and a length dunder."
+    metric_good = build_phase1_metric(model=build_judge_model())
+    metric_bad = build_phase1_metric(model=build_judge_model())
 
-    score_good, _, _ = measure_metric_with_majority(metric_good, good)
-    score_bad, _, _ = measure_metric_with_majority(metric_bad, bad)
+    score_good, _, _ = measure_metric_with_majority(
+        metric_good, LLMTestCase(input=case_input, actual_output=IDIOMATIC_SAMPLE)
+    )
+    score_bad, _, _ = measure_metric_with_majority(
+        metric_bad, LLMTestCase(input=case_input, actual_output=ANTI_PATTERN_SAMPLE)
+    )
     assert score_bad < score_good, (
         f"juiz não discriminou o anti-padrão: bom={score_good} ruim={score_bad}"
     )
