@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -187,54 +188,161 @@ def build_judge_model(
     )
 
 
-def build_gate_metric(model: OpenAIModel) -> GEval:
-    """Cria a metrica GEval com a rubrica arquitetural do Cross-Repo Gate.
+FUNCTIONAL_GATE_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "Gate Rule 1: Test And Gate Integrity",
+        (
+            "The code changes must not delete or weaken existing tests, "
+            "assertions or quality gates for the sole purpose of making a "
+            "pipeline pass; replacing an evaluation channel proven "
+            "unreliable with a stricter validated channel, documented in "
+            "the change itself, is fully compliant."
+        ),
+    ),
+    (
+        "Gate Rule 2: No Error Masking",
+        (
+            "The code changes must not mask errors through try-except "
+            "blocks, silent suppressions or artificial mocks that hide the "
+            "root cause instead of resolving it; handling a documented "
+            "expected exception in a linear except chain is compliant."
+        ),
+    ),
+    (
+        "Gate Rule 3: Public Contract Preservation",
+        (
+            "The code changes must not break existing public contracts "
+            "(function and class signatures, CLI commands, persisted data "
+            "formats, documented workflows) without updating the dependent "
+            "code and the specification that documents them."
+        ),
+    ),
+)
+
+
+class FunctionalRuleBattery:
+    """Etapa 1 do gate: uma diretriz NEGATIVA por metrica de regra unica.
+
+    Substitui o score absoluto amplo de alinhamento spec-vs-diff, provado
+    bimodal nos previews com dois modelos (gemma4:e2b votou 10/False contra
+    um motivo que elogiava as mudancas; qwen2.5-coder:14b votou 0/False em
+    diffs meta lendo o patch como "resposta sem avaliacao"). O canal
+    negativo de diretriz unica — o mesmo do RCA, estavel em todas as
+    corridas das suites — pergunta apenas se HÁ violacao detectavel, e a
+    ausencia de demonstracao jamais conta como violacao (protegido pela
+    fabrica `build_single_rule_metric`).
+
+    Attributes:
+        rules: As metricas GEval de diretriz unica que compoem a bateria.
+    """
+
+    def __init__(self, rules: list[Any]) -> None:
+        """Inicializa a bateria com as metricas de regra unica.
+
+        Args:
+            rules: Metricas de diretriz unica (GEval da fabrica, ou equivalentes
+                duck-typed: name/measure/score/is_successful/reason).
+        """
+        if not rules:
+            raise ValueError("FunctionalRuleBattery exige ao menos 1 regra")
+        self.rules = list(rules)
+        self.score: float = 0.0
+        self.reason: str = ""
+        self._ok: bool = False
+        self._evaluated: bool = False
+
+    def measure(self, test_case: LLMTestCase) -> None:
+        """Mede cada regra com maioria de votos e consolida o veredito.
+
+        Idempotente: a maioria interna ja fecha a bateria em
+        `FUNCTIONAL_JUDGE_VOTES` medias por regra; leituras repetidas pelo
+        laco externo do pipeline reutilizam o mesmo veredito em vez de
+        re-medir (custo/fragilidade de JSON invalido proporcionais ao
+        numero de chamadas ao LLM).
+
+        Args:
+            test_case: Par (especificacao compactada, diff consolidado).
+        """
+        if self._evaluated:
+            return
+        verdicts: list[tuple[str, int, bool, str]] = []
+        for rule in self.rules:
+            rule_score, rule_ok, rule_reason = measure_metric_with_majority(
+                rule, test_case, votes=FUNCTIONAL_JUDGE_VOTES
+            )
+            verdicts.append((rule.name, rule_score, rule_ok, rule_reason))
+        passed = [v for v in verdicts if v[2]]
+        self.score = len(passed) / len(verdicts)
+        self._ok = len(passed) == len(verdicts)
+        failures = [
+            f"[{name}] {reason}" for name, _, ok, reason in verdicts if not ok
+        ]
+        self.reason = (
+            "; ".join(failures)
+            if failures
+            else "Nenhuma violacao detectada pelas regras negativas do gate."
+        )
+        self._evaluated = True
+
+    def is_successful(self) -> bool:
+        """Retorna True somente quando toda regra passou por maioria.
+
+        Returns:
+            Sucesso consolidado da bateria.
+        """
+        return self._ok
+
+    @property
+    def is_approved(self) -> bool:
+        """Propriedade computada do veredito (estilo de modelo coeso)."""
+        return self._ok
+
+    def __len__(self) -> int:
+        """Retorna a quantidade de regras na bateria."""
+        return len(self.rules)
+
+    def __iter__(self) -> Iterator[Any]:
+        """Itera as metricas de regra unica na ordem fiscalizada."""
+        return iter(self.rules)
+
+    def __getitem__(self, index: int) -> Any:
+        """Retorna a metrica de regra na posicao indicada."""
+        return self.rules[index]
+
+    def __contains__(self, item: object) -> bool:
+        """Indica se a metrica pertence a esta bateria (identidade ou igualdade)."""
+        return any(rule is item or rule == item for rule in self.rules)
+
+    def __repr__(self) -> str:
+        """Retorna representacao canônica com o estado do veredito."""
+        return (
+            f"FunctionalRuleBattery(rules={len(self.rules)}, "
+            f"approved={self._ok}, score={self.score:.2f})"
+        )
+
+
+def build_gate_metric(model: OpenAIModel) -> FunctionalRuleBattery:
+    """Cria a Etapa 1 do gate como bateria de regras negativas de diretriz unica.
+
+    Evidencia que motivou o redesenho (documentada em specs/prompts/
+    rca_guidelines.md e no PR #51): um GEval amplo e absoluto ("as mudancas
+    alinham com a especificacao?") e estruturalmente nao-confiavel em modelos
+    locais — carimba ou zera conforme o dominio do diff coincida com o da
+    especificacao (release que altera o proprio pipeline de avaliacao). As
+    regras negativas detectam violacoes concretas (enfraquecer gates,
+    mascarar erros, quebrar contratos) no canal comprovadamente estavel.
 
     Args:
         model: Modelo instanciado para atuar como juiz.
 
     Returns:
-        Instancia da metrica GEval configurada com limiar de 0.9.
+        Bateria com uma GEval de diretriz unica por regra normativa.
     """
-    criteria = (
-        "Evaluate whether the implemented code changes (actual_output) align with "
-        "the architecture and guidelines in the specification (input) without "
-        "introducing regressions, breaking contracts, or violating standards. "
-        "Maintenance, bug fixes, CLI enhancements, refactoring, and formatting "
-        "(e.g. PEP 8) are fully compliant when they preserve behavioral "
-        "and structural integrity and provide validating unit tests."
-    )
-    evaluation_steps = [
-        (
-            "Verify that code changes adhere to the architecture and principles "
-            "described in the specification without breaking existing behavior."
-        ),
-        (
-            "Recognize that maintenance tasks, bug fixes, CLI enhancements, "
-            "refactoring, formatting adjustments (PEP 8), and unit tests are "
-            "fully valid and MUST NOT be penalized. Award full score (1.0)."
-        ),
-        (
-            "Ensure method signatures, data models, or endpoints modified in the patch "
-            "do not violate contract requirements or introduce regressions."
-        ),
-        (
-            "Deduct points ONLY for explicit regressions, breaking API changes, "
-            "architectural violations, or unhandled errors."
-        ),
-        (
-            "If the code is clean, compliant with standards, or consists of valid "
-            "maintenance, enhancements, or bug fixes with tests, award 1.0."
-        ),
+    rules = [
+        build_single_rule_metric(model, rule_text, name)
+        for name, rule_text in FUNCTIONAL_GATE_RULES
     ]
-    return GEval(
-        name="Cross-Repo Specification Compliance",
-        criteria=criteria,
-        evaluation_steps=evaluation_steps,
-        evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT],
-        model=model,
-        threshold=0.9,
-    )
+    return FunctionalRuleBattery(rules=rules)
 
 
 def build_fluent_python_metric(model: OpenAIModel) -> GEval:
@@ -251,7 +359,8 @@ def build_fluent_python_metric(model: OpenAIModel) -> GEval:
         "avoid severe prohibited anti-patterns from the normative guidelines (input). "
         "Primitive types (bool, int, str) and None as default arguments are completely "
         "immutable and NEVER violate SPEC-PY-06. "
-        "Utility classes (e.g. AST visitors, CLI commands, handlers) and functions "
+        "Utility classes (e.g. AST visitors, CLI commands, handlers, "
+        "evaluation judges, DeepEval metrics and rule batteries) and functions "
         "are fully exempt from implementing special container methods "
         "(__len__, __repr__, __iter__). "
         "If the code contains no prohibited anti-patterns, award full score (1.0)."
@@ -764,6 +873,18 @@ def compact_diff_for_functional_stage(
 
 FUNCTIONAL_JUDGE_VOTES = 3
 
+FUNCTIONAL_STAGE_INPUT_PREAMBLE = (
+    "NEGATIVE COMPLIANCE AUDIT OF THE RELEASE DIFF. The ONLY material "
+    "under evaluation is the unified git diff in the actual_output. Judge "
+    "each stated guideline strictly for the PRESENCE OF A CONCRETE "
+    "VIOLATION inside that diff. A diff that refactors, maintains, tests "
+    "or documents code without directly violating the guideline FOLLOWS it "
+    "and MUST receive full score (1.0). Do NOT require the diff to "
+    "implement, mention or align with any specification, feature or "
+    "requirement: absence of alignment is NOT a violation of a negative "
+    "guideline, and no specification is provided here on purpose."
+)
+
 
 def aggregate_functional_votes(
     votes: list[tuple[int, bool, str]],
@@ -796,8 +917,133 @@ def aggregate_functional_votes(
     return median_score, is_success, reason
 
 
+def build_single_rule_metric(
+    model: OpenAIModel, rule: str, name: str
+) -> GEval:
+    """Cria uma GEval de diretriz única, à prova de context-blooming em 7B.
+
+    Evidência empírica dos previews: métricas amplas fazem modelos locais
+    pequenos pontuar AUSÊNCIA de demonstração como violação ou virar
+    carimbo total. Esta fábrica fixa o desenho validado nos previews:
+    uma diretriz por métrica, steps que proíbem penalizar o não-requerido
+    e redação explícita de que o snippet pode ter qualquer estrutura
+    (modelos lia "single rule" como "função única").
+
+    Args:
+        model: Instância OpenAIModel apontando ao endpoint do harness.
+        rule: A única diretriz normativa a fiscalizar.
+        name: Nome da métrica (visível no relatório DeepEval).
+
+    Returns:
+        Instância GEval com threshold 0.9 e params input+output.
+    """
+    return GEval(
+        name=name,
+        criteria=(
+            "Assess the code against exactly ONE guideline, stated below. "
+            "Guideline: " + rule + " Judge only compliance with this "
+            "guideline. The size or structure of the code is irrelevant: "
+            "a snippet may contain any number of functions and classes."
+        ),
+        evaluation_steps=[
+            "1. Identify the one guideline stated in the criteria.",
+            "2. Decide whether the code follows or violates that guideline.",
+            (
+                "3. Do not penalize the absence of anything unrelated "
+                "to the guideline; never require the snippet to be a "
+                "single function."
+            ),
+            (
+                "4. Score 1.0 if the guideline is followed; deduct "
+                "points only for a direct violation of it."
+            ),
+        ],
+        evaluation_params=[
+            SingleTurnParams.INPUT,
+            SingleTurnParams.ACTUAL_OUTPUT,
+        ],
+        model=model,
+        threshold=0.9,
+    )
+
+
+MEASUREMENT_JSON_RETRIES = 2
+
+MEASUREMENT_ERROR_MARKERS: tuple[str, ...] = (
+    "invalid JSON",
+    "validation errors for ReasonScore",
+)
+
+
+def is_measurement_json_error(error: BaseException) -> bool:
+    """Reconhece a falha do MEDIDOR DeepEval ao interpretar o output do juiz.
+
+    O juiz local (gemma4:e2b) provou-se instavel exatamente aqui: nas suites
+    (snippets curtos) e 100% disciplina de schema; na Etapa 1 (input longo
+    spec+diff) falhou 3 vezes seguidas em duas formas — o texto "invalid
+    JSON" e o ReasonScore violado (output em outro esquema, sem reason/score).
+    Ambas sao o mesmo fenomeno: a chamada de inferencia nao produziu o
+    contrato que o medidor espera. Nao e veredito de conformidade: rejeicoes
+    legitimas vem como voto, nao como excecao.
+
+    Args:
+        error: Excecao lancada por uma medicao GEval.
+
+    Returns:
+        True quando o erro e de contrato-de-output-violado-pelo-juiz.
+    """
+    return any(marker in str(error) for marker in MEASUREMENT_ERROR_MARKERS)
+
+
+def collect_metric_vote(
+    metric: Any,
+    test_case: LLMTestCase,
+    attempts: int = MEASUREMENT_JSON_RETRIES,
+) -> tuple[int, bool, str]:
+    """Colhe um voto da metrica, re-tentando apenas erro de parsing do juiz.
+
+    Robustez do instrumento, nao mascaramento: um tropeco de JSON do LLM
+    avaliador e transitorio e re-tenta; qualquer outro erro (inclusive
+    rejeicao de conformidade expressa como excecao) e o esgotamento das
+    tentativas PROPAGAM a excecao, que o juiz reporta como falha de tier de
+    forma audivel — nunca silenciosa.
+
+    Args:
+        metric: Metrica GEval (ou equivalente duck-typed) a medir.
+        test_case: Par (input, actual_output) avaliado.
+        attempts: Tentativas totais para erro de parsing do medidor.
+
+    Returns:
+        Voto (score normalizado, sucesso, motivo).
+
+    Raises:
+        Exception: A ultima excecao de parsing quando todas as tentativas
+            falham, ou imediatamente qualquer erro que nao seja de parsing.
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            metric.measure(test_case)
+            return (
+                normalize_deepeval_score(metric.score),
+                bool(metric.is_successful()),
+                str(metric.reason or ""),
+            )
+        except Exception as vote_error:
+            if not is_measurement_json_error(vote_error):
+                raise
+            last_error = vote_error
+            LOGGER.warning(
+                "Voto do juiz com JSON invalido; re-tentando (%d/%d)",
+                attempt,
+                attempts,
+            )
+    assert last_error is not None
+    raise last_error
+
+
 def measure_metric_with_majority(
-    metric: GEval,
+    metric: Any,
     test_case: LLMTestCase,
     votes: int = FUNCTIONAL_JUDGE_VOTES,
 ) -> tuple[int, bool, str]:
@@ -823,14 +1069,7 @@ def measure_metric_with_majority(
         raise ValueError("measure_metric_with_majority exige ao menos 1 voto")
     collected: list[tuple[int, bool, str]] = []
     for _ in range(votes):
-        metric.measure(test_case)
-        collected.append(
-            (
-                normalize_deepeval_score(metric.score),
-                bool(metric.is_successful()),
-                str(metric.reason or ""),
-            )
-        )
+        collected.append(collect_metric_vote(metric, test_case))
     return aggregate_functional_votes(collected)
 
 
@@ -858,8 +1097,10 @@ def run_judge_metrics_pipeline(
     compacted_diff = compact_diff_for_functional_stage(
         diffs_content, spec_content=spec_content
     )
-    compacted_spec = compact_spec_for_functional_stage(spec_content)
-    func_test_case = LLMTestCase(input=compacted_spec, actual_output=compacted_diff)
+    func_test_case = LLMTestCase(
+        input=FUNCTIONAL_STAGE_INPUT_PREAMBLE,
+        actual_output=compacted_diff,
+    )
     func_votes: list[tuple[int, bool, str]] = []
     for _ in range(FUNCTIONAL_JUDGE_VOTES):
         functional_metric.measure(func_test_case)

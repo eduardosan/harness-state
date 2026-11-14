@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from deepeval.test_case import LLMTestCase
 
 from harness_state.judge import (
     JUDGE_DEFAULT_MODEL,
@@ -16,6 +17,7 @@ from harness_state.judge import (
     build_judge_model,
     evaluate_spec_diff,
     main,
+    measure_metric_with_majority,
     resolve_fallback_judge_model,
 )
 
@@ -162,14 +164,277 @@ def test_evaluate_spec_diff_does_not_retry_when_fallback_equals_primary(
 
 
 def test_build_gate_metric_rubric() -> None:
-    """Business Rule: A metrica de gate deve configurar o limiar rigoroso de 0.9."""
+    """Business Rule: A Etapa 1 do gate e uma bateria de regras NEGATIVAS de
+    diretriz unica com limiar 0.9 — jamais um score absoluto amplo de
+    alinhamento spec-vs-diff, canal provado bimodal nos previews com
+    gemma4:e2b (10/False x3 contra "valid enhancements") e qwen2.5-coder:14b
+    (0/False x3 lendo o diff meta como "resposta sem avaliacao")."""
     dummy_model = build_judge_model(
         base_url="http://127.0.0.1:11435/v1",
         api_key="ollama",
     )
-    metric = build_gate_metric(model=dummy_model)
-    assert metric.threshold == 0.9
-    assert metric.name == "Cross-Repo Specification Compliance"
+    battery = build_gate_metric(model=dummy_model)
+    assert len(battery.rules) >= 3
+    assert len({rule.name for rule in battery.rules}) == len(battery.rules)
+    for rule in battery.rules:
+        assert rule.threshold == 0.9
+        assert "must not" in (rule.criteria or "").lower()
+
+
+class BatteryRuleFake:
+    """Metrica de regra única fake que consome votos em ciclo.
+
+    Attributes:
+        name: Identificador da regra (exposto no veredito da bateria).
+    """
+
+    def __init__(self, name: str, scores: list[float], oks: list[bool]) -> None:
+        """Inicializa a fila ciclica de votos da regra."""
+        self.name = name
+        self._scores = list(scores)
+        self._oks = list(oks)
+        self.calls = 0
+        self.score: float = 0.0
+        self.reason = ""
+        self._ok = False
+
+    def measure(self, _case: object) -> None:
+        """Consome o proximo voto da fila (ciclico)."""
+        index = self.calls % len(self._scores)
+        self.score = self._scores[index]
+        self._ok = self._oks[index]
+        self.reason = f"{self.name}: voto {index}"
+        self.calls += 1
+
+    def is_successful(self) -> bool:
+        """Retorna o sucesso do ultimo voto consumido."""
+        return self._ok
+
+
+class FlakyJsonMetric:
+    """Metrica fake que devolve JSON invalido nas primeiras medicoes.
+
+    Attributes:
+        name: Identificador da regra.
+        failures: Quantidade de medicoes que lanciam erro de parsing.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        failures: int,
+        score: float = 0.95,
+        error_message: str = (
+            "Evaluation LLM outputted an invalid JSON. "
+            "Please use a better evaluation model."
+        ),
+    ) -> None:
+        """Configura quantas medicoes falham antes de retornar o score."""
+        self.name = name
+        self._failures = failures
+        self._score = score
+        self._error_message = error_message
+        self.calls = 0
+        self.reason = ""
+
+    def measure(self, _case: object) -> None:
+        """Simula o erro transitorio de parsing do DeepEval e depois vota."""
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise RuntimeError(self._error_message)
+        self.score = self._score
+        self.reason = "ok after retry"
+
+    def is_successful(self) -> bool:
+        """Retorna sucesso conforme o score configurado."""
+        return self.score >= 0.9
+
+
+class CapturingMetric:
+    """Metrica fake que registra o LLMTestCase recebido e sempre aprova."""
+
+    def __init__(self, name: str = "Gate Rule Capture") -> None:
+        """Inicializa o registro."""
+        self.name = name
+        self.cases: list[LLMTestCase] = []
+        self.score = 0.95
+        self.reason = "ok"
+
+    def measure(self, test_case: LLMTestCase) -> None:
+        """Registra o case e devolve voto de aprovacao."""
+        self.cases.append(test_case)
+        self.score = 0.95
+
+    def is_successful(self) -> bool:
+        """Sempre aprova (cenario feliz do pipeline)."""
+        return True
+
+
+@patch("harness_state.judge.build_judge_model")
+@patch("harness_state.judge.build_gate_metric")
+def test_stage1_input_declares_that_code_lives_in_actual_output(
+    mock_build_metric: MagicMock,
+    mock_build_model: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: o input da Etapa 1 deve declarar explicitamente que o
+    codigo avaliado esta no actual_output (diff) e que a spec e somente
+    contexto — evidencia do preview 43631932135: o juiz de producao votou as
+    3 regras contra "the input does not contain any code snippet... a
+    detailed architectural description" porque o par (spec, diff) nao rotulou
+    os papeis, e que a SPEC NAO entra no contexto — com a spec no input, o
+    mesmo modelo (preview 43633346713) reprovou "por nao alinhar com a
+    especificacao", tratando o contexto como requisito."""
+    capture = CapturingMetric()
+    mock_build_metric.return_value = capture
+    mock_build_model.return_value = MagicMock()
+
+    spec_file = tmp_path / "SPEC-013.md"
+    spec_file.write_text("# SPEC-013\nRequisito: bateria de regras\n", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+def f() -> int:\n+    return 1\n", encoding="utf-8")
+
+    evaluate_spec_diff(
+        spec_path=spec_file,
+        diffs_path=diffs_file,
+        model="agentic-qwen",
+        fallback_model="agentic-qwen",
+    )
+
+    assert capture.cases, "Etapa 1 nunca mediu o case"
+    case = capture.cases[0]
+    input_text = str(case.input)
+    assert "actual_output" in input_text or "actual output" in input_text.lower()
+    # Contrato novo (evidencia do preview 43633346713): a PRESENCA da spec no
+    # input contamina as regras negativas em modelos locais — o juiz votou
+    # 0x3 por "the changes do not align with the specification". A Etapa 1
+    # audita SOMENTE o diff; a spec nao entra no contexto do juiz.
+    assert "SPEC-013" not in input_text
+    assert "violation" in input_text.lower()
+
+
+def test_fluent_metric_excludes_evaluation_harness_classes() -> None:
+    """Business Rule: a metrica fluente deve isentar explicitamente as
+    classes de infraestrutura de avaliacao (juiz, metricas, baterias) dos
+    metodos de container — evidencia do preview 43631932135: o juiz cobrou
+    __len__/__repr__/__iter__ de FunctionalRuleBattery, que nao e modelo de
+    dados do dominio."""
+    dummy_model = build_judge_model(
+        base_url="http://127.0.0.1:11435/v1",
+        api_key="ollama",
+    )
+    metric = build_fluent_python_metric(model=dummy_model)
+    criteria = (metric.criteria or "").lower()
+    assert "batteries" in criteria
+    assert "evaluation judges" in criteria
+
+
+def test_battery_is_a_cohesive_container_model() -> None:
+    """Business Rule: FunctionalRuleBattery agrega dados relacionais (as regras
+    e o veredito), logo expoe os metodos especiais do Python Data Model
+    (__len__, __iter__, __getitem__, __contains__, __repr__) conforme AGENTS.md
+    5.1 / SPEC-PY-01 — cobranca recebida nos previews 43633346713 e
+    43634495005 era desvio legitimo de estilo da casa, nao hallucinacao: as
+    isencoes fluentes so cobrem classes utilitarias puras."""
+    from harness_state.judge import FunctionalRuleBattery
+
+    rules = [
+        BatteryRuleFake("R1", [0.95] * 3, [True] * 3),
+        BatteryRuleFake("R2", [0.95] * 3, [True] * 3),
+    ]
+    battery = FunctionalRuleBattery(rules=rules)
+
+    assert len(battery) == 2
+    assert list(battery) == rules
+    assert battery[1] is rules[1]
+    assert rules[0] in battery
+    assert "anything-else" not in battery
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    representation = repr(battery)
+    assert "FunctionalRuleBattery" in representation
+    assert "2" in representation
+    assert battery.is_approved is True
+
+
+def test_vote_retries_only_measurement_json_error() -> None:
+    """Business Rule: um voto com JSON invalido do juiz e falha do MEDIDOR,
+    nao veredito de conformidade: o voto e re-tentado; rejeicoes validas
+    continuam virando votos (sem retry) e o esgotamento das tentativas
+    propaga a excecao de forma audivel (proibido mascaramento)."""
+    metric = FlakyJsonMetric("Gate Rule 1", failures=1)
+    score, ok, _reason = measure_metric_with_majority(
+        metric, LLMTestCase(input="spec", actual_output="diff"), votes=1
+    )
+    assert metric.calls == 2
+    assert ok is True
+    assert score == 95
+
+    schema = FlakyJsonMetric(
+        "Gate Rule 1",
+        failures=1,
+        error_message=(
+            "2 validation errors for ReasonScore\n"
+            "reason\n  Field required [type=missing, ...]\nscore\n"
+            "  Field required [type=missing, ...]"
+        ),
+    )
+    schema_score, schema_ok, _schema_reason = measure_metric_with_majority(
+        schema, LLMTestCase(input="spec", actual_output="diff"), votes=1
+    )
+    assert schema.calls == 2
+    assert schema_ok is True
+    assert schema_score == 95
+
+    broken = FlakyJsonMetric("Gate Rule 1", failures=99)
+    try:
+        measure_metric_with_majority(
+            broken, LLMTestCase(input="spec", actual_output="diff"), votes=1
+        )
+    except RuntimeError as error:
+        assert "invalid JSON" in str(error)
+    else:
+        raise AssertionError(
+            "Business Rule: exauridas as tentativas o erro do medidor DEVE "
+            "propagar — engoli-lo seria mascaramento"
+        )
+
+
+def test_battery_approves_only_when_every_rule_passes_by_majority() -> None:
+    """Business Rule: a bateria da Etapa 1 so aprova quando TODA regra negativa
+    passa por maioria de votos; a rejeicao reporta nominalmente cada violacao."""
+    from harness_state.judge import FunctionalRuleBattery
+
+    rules = [
+        BatteryRuleFake("Gate Rule Integrity", [0.95, 0.95, 0.95], [True] * 3),
+        BatteryRuleFake(
+            "Gate Rule Masking", [0.95, 0.05, 0.05], [True, False, False]
+        ),
+        BatteryRuleFake("Gate Rule Contracts", [0.95, 0.95, 0.95], [True] * 3),
+    ]
+    battery = FunctionalRuleBattery(rules=rules)
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    # Idempotencia: a maioria interna ja fecha o veredito; as leituras do
+    # laco externo do pipeline NAO re-medem (9 calls totais, nao 27).
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    assert rules[0].calls == 3
+    assert battery.is_successful() is False
+    assert 0.6 < battery.score < 0.7  # 2 de 3 regras aprovadas
+    assert "Gate Rule Masking" in battery.reason
+    assert "Gate Rule Integrity" not in battery.reason
+    assert rules[0].calls == 3  # maioria de 3 por regra (FUNCTIONAL_JUDGE_VOTES)
+
+    clean = FunctionalRuleBattery(
+        rules=[
+            BatteryRuleFake("Gate Rule Integrity", [0.95] * 3, [True] * 3),
+            BatteryRuleFake("Gate Rule Masking", [0.95] * 3, [True] * 3),
+            BatteryRuleFake("Gate Rule Contracts", [0.95] * 3, [True] * 3),
+        ]
+    )
+    clean.measure(LLMTestCase(input="spec", actual_output="diff"))
+    assert clean.is_successful() is True
+    assert clean.score == 1.0
+    assert "violacao" in clean.reason.lower()
 
 
 @patch("harness_state.judge.build_gate_metric")
@@ -327,9 +592,14 @@ def test_evaluate_spec_diff_staged_both_approved(
     )
     assert mock_build_func.called
     assert mock_build_fluent.called
-    # Verifica que a chamada funcional recebeu a spec original e o diff completo
+    # Contrato da Etapa 1 (evidencia do preview 43633346713): o JUIZ recebe
+    # apenas o framing de auditoria negativa como input e o diff como
+    # actual_output — a spec fica FORA do contexto, pois com ela presente o
+    # modelo local tratou "nao alinhar com a especificacao" como violacao
+    # das regras negativas (3x0/100). O caso de teste ainda exige que o CLI
+    # leu a spec (arquivo obrigatorio p/ spec-id, logs e roteamento).
     called_func_case = mock_func_metric.measure.call_args[0][0]
-    assert "# SPEC-001" in called_func_case.input
+    assert "# SPEC-001" not in called_func_case.input
     assert "+@dataclass" in called_func_case.actual_output
     # Verifica que a chamada fluente recebeu diretrizes normativas e linhas adicionadas
     called_fluent_case = mock_fluent_metric.measure.call_args[0][0]

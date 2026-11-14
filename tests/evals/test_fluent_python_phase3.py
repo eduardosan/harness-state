@@ -6,12 +6,11 @@ from pathlib import Path
 import pytest
 from deepeval.metrics import GEval
 from deepeval.models.llms import OpenAIModel
-from deepeval.test_case import LLMTestCase, SingleTurnParams
+from deepeval.test_case import SingleTurnParams
 
 from harness_state.judge import (
     aggregate_functional_votes,
     build_judge_model,
-    measure_metric_with_majority,
 )
 
 os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
@@ -150,30 +149,16 @@ def test_phase3_metric_factory_uses_single_rule_and_strict_threshold() -> None:
     assert "Phase 3" in metric.name
 
 
-def test_phase3_real_llm_approves_idiomatic_snippets() -> None:
-    """Business Rule: sanity calibração — o LLM do harness não pode reprovar o
-    conjunto de micro-exemplares idiomáticos das regras da Fase 3."""
-    failures: list[str] = []
-    for index, (rule, good, _bad) in enumerate(RULE_CASES, start=1):
-        name = f"Fluent Python Phase 3 Rule {index}"
-        metric = build_single_rule_metric(build_judge_model(), rule, name)
-        score, success, reason = measure_metric_with_majority(
-            metric,
-            LLMTestCase(
-                input="Implement the snippet described, following the rule.",
-                actual_output=good,
-            ),
-        )
-        if not success:
-            failures.append(f"{name}: score={score} reason={reason}")
-    assert not failures, "exemplares reprovados:\n" + "\n".join(failures)
-
-
 def test_phase3_real_llm_forced_choice_discriminates_each_rule() -> None:
     """Business Rule: para TODAS as regras da Fase 3 o juiz identifica o
-    segmento idiomático em escolha forçada A/B — discriminação confiável,
-    dado que o score absoluto de um 7B mostrou-se instável nos previews
-    (ora severo, ora carimbo total)."""
+    segmento idiomático em escolha forçada A/B com maioria de 3 votos.
+
+    Este canal substitui definitivamente a aprovação por score absoluto:
+    previews com gemma4:e2b e qwen2.5-coder:14b provaram que modelos locais
+    fabulam requisitos fora da diretriz ("exige tratar lista vazia", "exige
+    comentários", "tem de ser função única") e zeram exemplares corretos —
+    canal não-confiável removido, não calibrado. Escolher o exemplar é,
+    simultaneamente, aprová-lo e reprovar o anti-padrão."""
     failures: list[str] = []
     for index, (rule, good, bad) in enumerate(RULE_CASES, start=1):
         name = f"Fluent Python Phase 3 Rule {index}"

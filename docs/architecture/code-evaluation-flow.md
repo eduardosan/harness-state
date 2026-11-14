@@ -99,11 +99,11 @@ flowchart LR
         DiffPatch["diffs.patch (Patch Git Unificado)"]
     end
 
-    subgraph Stage1Pipeline ["Etapa 1: Juiz Funcional (GEval 1)"]
+    subgraph Stage1Pipeline ["Etapa 1: Juiz Funcional (Bateria de Regras Negativas)"]
         SpecDoc --> Prompt1In["Input: Especificação Funcional"]
         DiffPatch --> Prompt1Out["Actual Output: Diff Completo do Repositório"]
-        Prompt1In & Prompt1Out --> GEvalFunc["GEval: Cross-Repo Specification Compliance"]
-        GEvalFunc --> FuncScore["Func Score (0 a 100) + Justificativa"]
+        Prompt1In & Prompt1Out --> GEvalFunc["FunctionalRuleBattery: 1 GEval por diretriz negativa"]
+        GEvalFunc --> FuncScore["Func Score = proporcao de regras aprovadas x 100 + violacoes nominais"]
     end
 
     subgraph Stage2Pipeline ["Etapa 2: Juiz Idiomático (GEval 2)"]
@@ -146,8 +146,8 @@ sequenceDiagram
     
     rect rgb(240, 248, 255)
     Note over Judge,Ollama: Etapa 1: Julgamento de Conformidade Funcional
-    Judge->>Ollama: GEval Funcional (Spec de Negócio vs Diff)
-    Ollama-->>Judge: Func Score: 95/100, Reason: "Endpoints e modelos conformes"
+    Judge->>Ollama: Bateria de 3 GEval de diretriz unica (Spec vs Diff), maioria de 3 por regra
+    Ollama-->>Judge: Func Score: 100/100, Reason: "Nenhuma violacao detectada pelas regras negativas"
     end
 
     rect rgb(255, 250, 240)
@@ -207,21 +207,52 @@ O `spec_router.py` processa o diff textual unificado utilizando expressões regu
 
 ### 3.3. Camada 3: Avaliador LLM em Etapas Especializadas (`judge.py`)
 
-O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework DeepEval com o tier padrão OpenCode `opencode/glm-5.3-flash-free` e fallback para `agentic-qwen` quando os recursos primários se esgotarem:
+O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework DeepEval. Os tiers são resolvidos pela config de servidor (envs canônicas): primário `LLM_JUDGE_MODEL` (neste repositório, `agentic-qwen`), fallback `LLM_JUDGE_FALLBACK_MODEL`; `opencode/glm-5.3-flash-free` permanece apenas como constante de último recurso `JUDGE_DEFAULT_MODEL`:
 
-#### Etapa 1: Avaliação de Conformidade Funcional
-- **Métrica:** `build_gate_metric` (`GEval`).
-- **Input:** Especificação funcional (`spec_content`).
-- **Actual Output:** Diff consolidado dos repositórios (`diffs_content`), compactado
-  cirurgicamente por arquivo (`compact_diff_for_functional_stage`) para respeitar o
-  orçamento de ~3.000 tokens por chamada: diffs pequenos seguem íntegros; diffs
-  multi-arquivo entregam linhas adicionadas compactadas (início/fim de cada arquivo)
-  com prioridade para código-fonte, depois testes e documentação, mantendo todos os
-  caminhos visíveis ao juiz.
-- **Critérios Avaliados:**
-  1. Presença de todos os modelos, entidades e regras de negócio exigidas pela especificação.
-  2. Conformidade das assinaturas de métodos e endpoints de API.
-  3. Existência de testes unitários com docstrings descritivas no formato `Business Rule: <regra>`.
+#### Etapa 1: Avaliação de Conformidade Funcional (Bateria de Regras Negativas)
+- **Métrica:** `build_gate_metric` devolve uma `FunctionalRuleBattery`: uma GEval de
+  **diretriz única e negativa** por regra normativa (fábrica `build_single_rule_metric`,
+  limiar 0.9), agregada por **maioria de 3 votos por regra** (`measure_metric_with_majority`).
+- **Regras normativas fiscalizadas** (`FUNCTIONAL_GATE_RULES`) — as únicas capazes de
+  reprovar a Etapa 1:
+  1. **Integridade de Gates de Qualidade:** o patch não apaga nem enfraquece testes,
+     asserções ou gates para fazer a pipeline passar; substituir um canal de avaliação
+     comprovadamente não-confiável por um mais estrito e validado é conforme.
+  2. **Proibição de Mascaramento de Erros** (RCA canônico): nada de `try/except`,
+     supressões silenciosas ou mocks artificiais que escondem a causa raiz.
+  3. **Preservação de Contratos Públicos:** assinaturas, comandos de CLI, formatos de
+     dados persistidos e fluxos documentados não mudam sem atualizar dependentes e spec.
+- **Input:** O framing fixo `FUNCTIONAL_STAGE_INPUT_PREAMBLE`, que declara o diff
+  como único material avaliado e estipula que **ausência de alinhamento com
+  especificação não é violação** de diretriz negativa. A spec **não** entra no
+  contexto do juiz da Etapa 1: com ela presente (preview 43633346713), o modelo
+  local tratou "não alinhar com a especificação" como violação das três regras
+  (3×0/100) — em modelos pequenos não existe "contexto apenas"; e em diffs meta
+  a linguagem da spec contamina a pergunta. A verificação de cobertura dos
+  requisitos funcionais da spec pertence aos gates determinísticos (ciclo de
+  vida spec-hub, suíte de testes), não ao LLM.
+- **Actual Output:** Diff consolidado (`diffs_content`), compactado cirurgicamente por
+  arquivo (`compact_diff_for_functional_stage`) para respeitar o orçamento de ~3.000
+  tokens por chamada: diffs pequenos seguem íntegros; diffs multi-arquivo entregam
+  linhas adicionadas compactadas (início/fim de cada arquivo) com prioridade para
+  código-fonte, depois testes e documentação, mantendo todos os caminhos visíveis ao juiz.
+- **Critério de Aprovação:** todas as regras aprovadas por maioria; o score é a
+  proporção de regras aprovadas × 100 e cada regra reprovada é reportada nominalmente
+  com prefixo `[Funcional]`.
+- **Robustez do medidor (não mascaramento):** um voto cujo output do juiz viole o
+  contrato JSON do DeepEval é erro de *medição*, não veredito de conformidade — o voto
+  é re-tentado (`collect_metric_vote`, 2 tentativas). Exauridas as tentativas, a
+  exceção propaga e o tier falha de forma audível no relatório. Rejeições legítimas
+  nunca são re-tentadas (vêm como voto, não como exceção).
+- **Fundamento (evidência, não palpite):** o desenho anterior — um único GEval absoluto
+  de alinhamento spec↔diff — provou-se **bimodal** nos previews com dois modelos
+  (`gemma4:e2b`: 10/False repetido contra um motivo que elogiava as mudanças;
+  `qwen2.5-coder:14b`: 0/False em diff meta, lendo o patch como "resposta que deveria
+  conter uma avaliação"). Modelos locais confundem instrução e dado quando spec e diff
+  tratam do mesmo assunto (release que altera o próprio pipeline de avaliação). O canal
+  **negativo de diretriz única** — o mesmo do RCA, estável em todas as corridas das
+  suítes (`tests/evals/`) — pergunta apenas se HÁ violação detectável, e a fábrica
+  proíbe penalizar ausência de demonstração.
 - **Peso:** 70% da pontuação total.
 
 #### Etapa 2: Avaliação de Conformidade Idiomática (Python Fluente)
