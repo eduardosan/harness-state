@@ -3,6 +3,14 @@ name: Tag and Release from Main (post-squash only)
 # SPEC-006 Onda 2 (D3.4) — release público AGPL-3.0, tag cortada no SHA
 # pós-squash da main (nunca head de PR). Bump por Conventional Commits,
 # versão do pacote sincronizada com a tag antes do build.
+#
+# Gate síncrono de LLM (regra do operador): após determinar a versão
+# candidata, o job `pre-release-eval` CHAMA (workflow_call) o
+# `tag-code-evaluation.yml` — que roda fluent-python-eval -> prompts-eval ->
+# LLM-as-a-Judge sobre o diff LATEST_TAG..HEAD (conteúdo exatamente igual ao
+# que será taggeado). Somente com veredito APPROVED o job `tag-and-release`
+# corta a tag, publica a GitHub Release e notifica o flywheel (core-released).
+# REJECTED ou falha de avaliação bloqueia o corte (needs falha -> skip).
 
 on:
   push:
@@ -94,9 +102,13 @@ jobs:
           uv run harness --help | grep -qE "bug|slack|verify"
           uv run harness spec --help | grep -qE "run"
 
-  tag-and-release:
+  release-candidate:
+    name: "Determinar a versão candidata da release"
     needs: [tests, public-surface-smoke, harness-complete]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.semver.outputs.tag }}
+      exists: ${{ steps.semver.outputs.exists }}
     steps:
       - name: Checkout da main
         uses: actions/checkout@v4
@@ -125,17 +137,6 @@ jobs:
             *BREAKING*|*breaking*) INFERRED="major" ;;
           esac
           BUMP="${EXPLICIT_BUMP:-$INFERRED}"
-          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
-          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Sincronizar versão do pacote com a tag
-        id: tag
-        env:
-          BUMP: ${{ steps.semver.outputs.bump }}
-          LATEST_TAG: ${{ steps.semver.outputs.latest_tag }}
-        run: |
-          # BASE do SemVer = o ÚLTIMO TAG real (sort -V), não o patch do pyproject
-          # (o pyproject fica 0.1.0 e o SemVer rebaixa releases depois do 0.2.0)
           if [ -n "$LATEST_TAG" ]; then
             BASE_VERSION="${LATEST_TAG#v}"
           else
@@ -149,44 +150,70 @@ jobs:
           }')
           TAG="v$NEXT"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG já existe — release idempotente."
+            echo "Tag $TAG já existe — reexecução idempotente, nada a cortar."
             echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Sincronizar versão no pyproject
-        if: steps.tag.outputs.tag != ''
+  pre-release-eval:
+    name: "Autoavaliação ANTES do corte (fluent -> prompts -> LLM-as-a-Judge)"
+    needs: release-candidate
+    if: needs.release-candidate.outputs.exists == 'false'
+    uses: ./.github/workflows/tag-code-evaluation.yml
+    with:
+      tag: ${{ needs.release-candidate.outputs.tag }}
+    secrets: inherit
+
+  tag-and-release:
+    name: "Cortar tag, publicar GitHub Release e notificar o flywheel"
+    needs: [release-candidate, pre-release-eval]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Registrar veredito prévio do juiz
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          STATUS: ${{ needs.pre-release-eval.outputs.status }}
+          SCORE: ${{ needs.pre-release-eval.outputs.compliance_score }}
+        run: |
+          echo "Gate síncrono: $STATUS (score ${SCORE}/100) — prosseguindo com o corte."
+
+      - name: Checkout da main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sincronizar versão no pyproject
+        env:
+          TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
           sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
           grep "^version = " pyproject.toml
 
       - name: Build wheel e sdist
-        if: steps.tag.outputs.tag != ''
         run: uv build
 
       - name: Criar tag anotada no SHA da main
-        if: steps.tag.outputs.tag != ''
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" "${{ github.sha }}" -m "Release $TAG"
+          git rev-parse "$TAG" >/dev/null 2>&1 || git tag -a "$TAG" "${{ github.sha }}" -m "Release $TAG"
           git push origin "$TAG"
 
       - name: Criar GitHub Release
-        if: steps.tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
           gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
 
-      - name: Gerar token de instalação da GitHub App (autoavaliação + dispatch cross-repo)
-        if: steps.tag.outputs.tag != ''
+      - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao flywheel)
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
@@ -195,10 +222,9 @@ jobs:
           owner: eduardosan
 
       - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
-        if: steps.tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.release-candidate.outputs.tag }}
           SHA: ${{ github.sha }}
         run: |
           gh api "repos/eduardosan/agentic-flywheel/dispatches" \
@@ -207,17 +233,3 @@ jobs:
             -f "client_payload[version]=${TAG#v}" \
             -f "client_payload[conclusion]=success" \
             -f "client_payload[eval_sha]=${SHA}"
-      - name: Gatilhar autoavaliação da release (DeepEval + LLM-as-a-Judge)
-        if: steps.tag.outputs.tag != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          # Push de tags feito com o GITHUB_TOKEN do próprio run NÃO dispara
-          # workflows (anti-recursão do GitHub vale para EVENTOS de push/PR).
-          # workflow_dispatch via API é uma criação direta de run e funciona
-          # com o GITHUB_TOKEN desde que o workflow declare `actions: write`
-          # (a App BOT não tem a permissão Actions — 403 observado em v0.6.0).
-          # Este passo roda por último para nunca bloquear o core-released.
-          gh workflow run "Tag Code Evaluation and Gate" \
-            --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
