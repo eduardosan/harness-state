@@ -187,54 +187,123 @@ def build_judge_model(
     )
 
 
-def build_gate_metric(model: OpenAIModel) -> GEval:
-    """Cria a metrica GEval com a rubrica arquitetural do Cross-Repo Gate.
+FUNCTIONAL_GATE_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "Gate Rule 1: Test And Gate Integrity",
+        (
+            "The code changes must not delete or weaken existing tests, "
+            "assertions or quality gates for the sole purpose of making a "
+            "pipeline pass; replacing an evaluation channel proven "
+            "unreliable with a stricter validated channel, documented in "
+            "the change itself, is fully compliant."
+        ),
+    ),
+    (
+        "Gate Rule 2: No Error Masking",
+        (
+            "The code changes must not mask errors through try-except "
+            "blocks, silent suppressions or artificial mocks that hide the "
+            "root cause instead of resolving it; handling a documented "
+            "expected exception in a linear except chain is compliant."
+        ),
+    ),
+    (
+        "Gate Rule 3: Public Contract Preservation",
+        (
+            "The code changes must not break existing public contracts "
+            "(function and class signatures, CLI commands, persisted data "
+            "formats, documented workflows) without updating the dependent "
+            "code and the specification that documents them."
+        ),
+    ),
+)
+
+
+class FunctionalRuleBattery:
+    """Etapa 1 do gate: uma diretriz NEGATIVA por metrica de regra unica.
+
+    Substitui o score absoluto amplo de alinhamento spec-vs-diff, provado
+    bimodal nos previews com dois modelos (gemma4:e2b votou 10/False contra
+    um motivo que elogiava as mudancas; qwen2.5-coder:14b votou 0/False em
+    diffs meta lendo o patch como "resposta sem avaliacao"). O canal
+    negativo de diretriz unica — o mesmo do RCA, estavel em todas as
+    corridas das suites — pergunta apenas se HÁ violacao detectavel, e a
+    ausencia de demonstracao jamais conta como violacao (protegido pela
+    fabrica `build_single_rule_metric`).
+
+    Attributes:
+        rules: As metricas GEval de diretriz unica que compoem a bateria.
+    """
+
+    def __init__(self, rules: list[Any]) -> None:
+        """Inicializa a bateria com as metricas de regra unica.
+
+        Args:
+            rules: Metricas de diretriz unica (GEval da fabrica, ou equivalentes
+                duck-typed: name/measure/score/is_successful/reason).
+        """
+        if not rules:
+            raise ValueError("FunctionalRuleBattery exige ao menos 1 regra")
+        self.rules = list(rules)
+        self.score: float = 0.0
+        self.reason: str = ""
+        self._ok: bool = False
+
+    def measure(self, test_case: LLMTestCase) -> None:
+        """Mede cada regra com maioria de votos e consolida o veredito.
+
+        Args:
+            test_case: Par (especificacao compactada, diff consolidado).
+        """
+        verdicts: list[tuple[str, int, bool, str]] = []
+        for rule in self.rules:
+            rule_score, rule_ok, rule_reason = measure_metric_with_majority(
+                rule, test_case, votes=FUNCTIONAL_JUDGE_VOTES
+            )
+            verdicts.append((rule.name, rule_score, rule_ok, rule_reason))
+        passed = [v for v in verdicts if v[2]]
+        self.score = len(passed) / len(verdicts)
+        self._ok = len(passed) == len(verdicts)
+        failures = [
+            f"[{name}] {reason}" for name, _, ok, reason in verdicts if not ok
+        ]
+        self.reason = (
+            "; ".join(failures)
+            if failures
+            else "Nenhuma violacao detectada pelas regras negativas do gate."
+        )
+
+    def is_successful(self) -> bool:
+        """Retorna True somente quando toda regra passou por maioria.
+
+        Returns:
+            Sucesso consolidado da bateria.
+        """
+        return self._ok
+
+
+def build_gate_metric(model: OpenAIModel) -> FunctionalRuleBattery:
+    """Cria a Etapa 1 do gate como bateria de regras negativas de diretriz unica.
+
+    Evidencia que motivou o redesenho (documentada em specs/prompts/
+    rca_guidelines.md e no PR #51): um GEval amplo e absoluto ("as mudancas
+    alinham com a especificacao?") e estruturalmente nao-confiavel em modelos
+    locais — carimba ou zera conforme o dominio do diff coincida com o da
+    especificacao (release que altera o proprio pipeline de avaliacao). As
+    regras negativas detectam violacoes concretas (enfraquecer gates,
+    mascarar erros, quebrar contratos) no canal comprovadamente estavel.
 
     Args:
         model: Modelo instanciado para atuar como juiz.
 
     Returns:
-        Instancia da metrica GEval configurada com limiar de 0.9.
+        Bateria com uma GEval de diretriz unica por regra normativa.
     """
-    criteria = (
-        "Evaluate whether the implemented code changes (actual_output) align with "
-        "the architecture and guidelines in the specification (input) without "
-        "introducing regressions, breaking contracts, or violating standards. "
-        "Maintenance, bug fixes, CLI enhancements, refactoring, and formatting "
-        "(e.g. PEP 8) are fully compliant when they preserve behavioral "
-        "and structural integrity and provide validating unit tests."
-    )
-    evaluation_steps = [
-        (
-            "Verify that code changes adhere to the architecture and principles "
-            "described in the specification without breaking existing behavior."
-        ),
-        (
-            "Recognize that maintenance tasks, bug fixes, CLI enhancements, "
-            "refactoring, formatting adjustments (PEP 8), and unit tests are "
-            "fully valid and MUST NOT be penalized. Award full score (1.0)."
-        ),
-        (
-            "Ensure method signatures, data models, or endpoints modified in the patch "
-            "do not violate contract requirements or introduce regressions."
-        ),
-        (
-            "Deduct points ONLY for explicit regressions, breaking API changes, "
-            "architectural violations, or unhandled errors."
-        ),
-        (
-            "If the code is clean, compliant with standards, or consists of valid "
-            "maintenance, enhancements, or bug fixes with tests, award 1.0."
-        ),
+    rules = [
+        build_single_rule_metric(model, rule_text, name)
+        for name, rule_text in FUNCTIONAL_GATE_RULES
     ]
-    return GEval(
-        name="Cross-Repo Specification Compliance",
-        criteria=criteria,
-        evaluation_steps=evaluation_steps,
-        evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT],
-        model=model,
-        threshold=0.9,
-    )
+    return FunctionalRuleBattery(rules=rules)
 
 
 def build_fluent_python_metric(model: OpenAIModel) -> GEval:

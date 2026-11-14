@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from deepeval.test_case import LLMTestCase
 
 from harness_state.judge import (
     JUDGE_DEFAULT_MODEL,
@@ -162,14 +163,84 @@ def test_evaluate_spec_diff_does_not_retry_when_fallback_equals_primary(
 
 
 def test_build_gate_metric_rubric() -> None:
-    """Business Rule: A metrica de gate deve configurar o limiar rigoroso de 0.9."""
+    """Business Rule: A Etapa 1 do gate e uma bateria de regras NEGATIVAS de
+    diretriz unica com limiar 0.9 — jamais um score absoluto amplo de
+    alinhamento spec-vs-diff, canal provado bimodal nos previews com
+    gemma4:e2b (10/False x3 contra "valid enhancements") e qwen2.5-coder:14b
+    (0/False x3 lendo o diff meta como "resposta sem avaliacao")."""
     dummy_model = build_judge_model(
         base_url="http://127.0.0.1:11435/v1",
         api_key="ollama",
     )
-    metric = build_gate_metric(model=dummy_model)
-    assert metric.threshold == 0.9
-    assert metric.name == "Cross-Repo Specification Compliance"
+    battery = build_gate_metric(model=dummy_model)
+    assert len(battery.rules) >= 3
+    assert len({rule.name for rule in battery.rules}) == len(battery.rules)
+    for rule in battery.rules:
+        assert rule.threshold == 0.9
+        assert "must not" in (rule.criteria or "").lower()
+
+
+class BatteryRuleFake:
+    """Metrica de regra única fake que consome votos em ciclo.
+
+    Attributes:
+        name: Identificador da regra (exposto no veredito da bateria).
+    """
+
+    def __init__(self, name: str, scores: list[float], oks: list[bool]) -> None:
+        """Inicializa a fila ciclica de votos da regra."""
+        self.name = name
+        self._scores = list(scores)
+        self._oks = list(oks)
+        self.calls = 0
+        self.score: float = 0.0
+        self.reason = ""
+        self._ok = False
+
+    def measure(self, _case: object) -> None:
+        """Consome o proximo voto da fila (ciclico)."""
+        index = self.calls % len(self._scores)
+        self.score = self._scores[index]
+        self._ok = self._oks[index]
+        self.reason = f"{self.name}: voto {index}"
+        self.calls += 1
+
+    def is_successful(self) -> bool:
+        """Retorna o sucesso do ultimo voto consumido."""
+        return self._ok
+
+
+def test_battery_approves_only_when_every_rule_passes_by_majority() -> None:
+    """Business Rule: a bateria da Etapa 1 so aprova quando TODA regra negativa
+    passa por maioria de votos; a rejeicao reporta nominalmente cada violacao."""
+    from harness_state.judge import FunctionalRuleBattery
+
+    rules = [
+        BatteryRuleFake("Gate Rule Integrity", [0.95, 0.95, 0.95], [True] * 3),
+        BatteryRuleFake(
+            "Gate Rule Masking", [0.95, 0.05, 0.05], [True, False, False]
+        ),
+        BatteryRuleFake("Gate Rule Contracts", [0.95, 0.95, 0.95], [True] * 3),
+    ]
+    battery = FunctionalRuleBattery(rules=rules)
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    assert battery.is_successful() is False
+    assert 0.6 < battery.score < 0.7  # 2 de 3 regras aprovadas
+    assert "Gate Rule Masking" in battery.reason
+    assert "Gate Rule Integrity" not in battery.reason
+    assert rules[0].calls == 3  # maioria de 3 por regra (FUNCTIONAL_JUDGE_VOTES)
+
+    clean = FunctionalRuleBattery(
+        rules=[
+            BatteryRuleFake("Gate Rule Integrity", [0.95] * 3, [True] * 3),
+            BatteryRuleFake("Gate Rule Masking", [0.95] * 3, [True] * 3),
+            BatteryRuleFake("Gate Rule Contracts", [0.95] * 3, [True] * 3),
+        ]
+    )
+    clean.measure(LLMTestCase(input="spec", actual_output="diff"))
+    assert clean.is_successful() is True
+    assert clean.score == 1.0
+    assert "violacao" in clean.reason.lower()
 
 
 @patch("harness_state.judge.build_gate_metric")
