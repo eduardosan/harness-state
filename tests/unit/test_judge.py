@@ -224,6 +224,11 @@ def test_battery_approves_only_when_every_rule_passes_by_majority() -> None:
     ]
     battery = FunctionalRuleBattery(rules=rules)
     battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    # Idempotencia: a maioria interna ja fecha o veredito; as leituras do
+    # laco externo do pipeline NAO re-medem (9 calls totais, nao 27).
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    battery.measure(LLMTestCase(input="spec", actual_output="diff"))
+    assert rules[0].calls == 3
     assert battery.is_successful() is False
     assert 0.6 < battery.score < 0.7  # 2 de 3 regras aprovadas
     assert "Gate Rule Masking" in battery.reason

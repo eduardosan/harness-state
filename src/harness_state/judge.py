@@ -248,13 +248,22 @@ class FunctionalRuleBattery:
         self.score: float = 0.0
         self.reason: str = ""
         self._ok: bool = False
+        self._evaluated: bool = False
 
     def measure(self, test_case: LLMTestCase) -> None:
         """Mede cada regra com maioria de votos e consolida o veredito.
 
+        Idempotente: a maioria interna ja fecha a bateria em
+        `FUNCTIONAL_JUDGE_VOTES` medias por regra; leituras repetidas pelo
+        laco externo do pipeline reutilizam o mesmo veredito em vez de
+        re-medir (custo/fragilidade de JSON invalido proporcionais ao
+        numero de chamadas ao LLM).
+
         Args:
             test_case: Par (especificacao compactada, diff consolidado).
         """
+        if self._evaluated:
+            return
         verdicts: list[tuple[str, int, bool, str]] = []
         for rule in self.rules:
             rule_score, rule_ok, rule_reason = measure_metric_with_majority(
@@ -272,6 +281,7 @@ class FunctionalRuleBattery:
             if failures
             else "Nenhuma violacao detectada pelas regras negativas do gate."
         )
+        self._evaluated = True
 
     def is_successful(self) -> bool:
         """Retorna True somente quando toda regra passou por maioria.
