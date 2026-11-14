@@ -282,7 +282,9 @@ def test_stage1_input_declares_that_code_lives_in_actual_output(
     contexto — evidencia do preview 43631932135: o juiz de producao votou as
     3 regras contra "the input does not contain any code snippet... a
     detailed architectural description" porque o par (spec, diff) nao rotulou
-    os papeis."""
+    os papeis, e que a SPEC NAO entra no contexto — com a spec no input, o
+    mesmo modelo (preview 43633346713) reprovou "por nao alinhar com a
+    especificacao", tratando o contexto como requisito."""
     capture = CapturingMetric()
     mock_build_metric.return_value = capture
     mock_build_model.return_value = MagicMock()
@@ -303,8 +305,12 @@ def test_stage1_input_declares_that_code_lives_in_actual_output(
     case = capture.cases[0]
     input_text = str(case.input)
     assert "actual_output" in input_text or "actual output" in input_text.lower()
-    assert "context" in input_text.lower()
-    assert "SPEC-013" in input_text
+    # Contrato novo (evidencia do preview 43633346713): a PRESENCA da spec no
+    # input contamina as regras negativas em modelos locais — o juiz votou
+    # 0x3 por "the changes do not align with the specification". A Etapa 1
+    # audita SOMENTE o diff; a spec nao entra no contexto do juiz.
+    assert "SPEC-013" not in input_text
+    assert "violation" in input_text.lower()
 
 
 def test_fluent_metric_excludes_evaluation_harness_classes() -> None:
@@ -559,9 +565,14 @@ def test_evaluate_spec_diff_staged_both_approved(
     )
     assert mock_build_func.called
     assert mock_build_fluent.called
-    # Verifica que a chamada funcional recebeu a spec original e o diff completo
+    # Contrato da Etapa 1 (evidencia do preview 43633346713): o JUIZ recebe
+    # apenas o framing de auditoria negativa como input e o diff como
+    # actual_output — a spec fica FORA do contexto, pois com ela presente o
+    # modelo local tratou "nao alinhar com a especificacao" como violacao
+    # das regras negativas (3x0/100). O caso de teste ainda exige que o CLI
+    # leu a spec (arquivo obrigatorio p/ spec-id, logs e roteamento).
     called_func_case = mock_func_metric.measure.call_args[0][0]
-    assert "# SPEC-001" in called_func_case.input
+    assert "# SPEC-001" not in called_func_case.input
     assert "+@dataclass" in called_func_case.actual_output
     # Verifica que a chamada fluente recebeu diretrizes normativas e linhas adicionadas
     called_fluent_case = mock_fluent_metric.measure.call_args[0][0]

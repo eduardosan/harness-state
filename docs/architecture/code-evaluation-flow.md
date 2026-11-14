@@ -222,7 +222,15 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
      supressões silenciosas ou mocks artificiais que escondem a causa raiz.
   3. **Preservação de Contratos Públicos:** assinaturas, comandos de CLI, formatos de
      dados persistidos e fluxos documentados não mudam sem atualizar dependentes e spec.
-- **Input:** Especificação funcional compactada (`spec_content`) como contexto.
+- **Input:** O framing fixo `FUNCTIONAL_STAGE_INPUT_PREAMBLE`, que declara o diff
+  como único material avaliado e estipula que **ausência de alinhamento com
+  especificação não é violação** de diretriz negativa. A spec **não** entra no
+  contexto do juiz da Etapa 1: com ela presente (preview 43633346713), o modelo
+  local tratou "não alinhar com a especificação" como violação das três regras
+  (3×0/100) — em modelos pequenos não existe "contexto apenas"; e em diffs meta
+  a linguagem da spec contamina a pergunta. A verificação de cobertura dos
+  requisitos funcionais da spec pertence aos gates determinísticos (ciclo de
+  vida spec-hub, suíte de testes), não ao LLM.
 - **Actual Output:** Diff consolidado (`diffs_content`), compactado cirurgicamente por
   arquivo (`compact_diff_for_functional_stage`) para respeitar o orçamento de ~3.000
   tokens por chamada: diffs pequenos seguem íntegros; diffs multi-arquivo entregam

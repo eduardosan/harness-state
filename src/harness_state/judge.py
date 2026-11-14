@@ -845,12 +845,15 @@ def compact_diff_for_functional_stage(
 FUNCTIONAL_JUDGE_VOTES = 3
 
 FUNCTIONAL_STAGE_INPUT_PREAMBLE = (
-    "ROLE DECLARATION FOR THE JUDGE: the CODE UNDER EVALUATION is the "
-    "unified git diff delivered in the actual_output. The reference "
-    "specification reproduced below is CONTEXT ONLY - it documents intent "
-    "and is not the material being judged. Apply every guideline strictly "
-    "to the diff found in actual_output.\n\n"
-    "REFERENCE SPECIFICATION (context only):\n"
+    "NEGATIVE COMPLIANCE AUDIT OF THE RELEASE DIFF. The ONLY material "
+    "under evaluation is the unified git diff in the actual_output. Judge "
+    "each stated guideline strictly for the PRESENCE OF A CONCRETE "
+    "VIOLATION inside that diff. A diff that refactors, maintains, tests "
+    "or documents code without directly violating the guideline FOLLOWS it "
+    "and MUST receive full score (1.0). Do NOT require the diff to "
+    "implement, mention or align with any specification, feature or "
+    "requirement: absence of alignment is NOT a violation of a negative "
+    "guideline, and no specification is provided here on purpose."
 )
 
 
@@ -1065,9 +1068,8 @@ def run_judge_metrics_pipeline(
     compacted_diff = compact_diff_for_functional_stage(
         diffs_content, spec_content=spec_content
     )
-    compacted_spec = compact_spec_for_functional_stage(spec_content)
     func_test_case = LLMTestCase(
-        input=FUNCTIONAL_STAGE_INPUT_PREAMBLE + compacted_spec,
+        input=FUNCTIONAL_STAGE_INPUT_PREAMBLE,
         actual_output=compacted_diff,
     )
     func_votes: list[tuple[int, bool, str]] = []
