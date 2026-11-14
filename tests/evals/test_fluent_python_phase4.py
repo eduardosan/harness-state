@@ -101,6 +101,18 @@ def build_single_rule_metric(
             "Evaluate the generated Python code strictly against this single "
             "rule; do not penalize the absence of other good practices: " + rule
         ),
+        evaluation_steps=[
+            "1. Read the SINGLE rule stated in the criteria; it is the only "
+            "subject of this evaluation.",
+            "2. Check whether the snippet demonstrably complies with that one "
+            "rule as written.",
+            "3. Ignore the absence of any other best practice, other "
+            "operator methods, other validated attributes, other "
+            "metaprogramming hierarchy levels or defensive checks not "
+            "required by the rule.",
+            "4. Score 1.0 when the rule is followed; deduct points ONLY for "
+            "a direct violation of that same rule.",
+        ],
         evaluation_params=[
             SingleTurnParams.INPUT,
             SingleTurnParams.ACTUAL_OUTPUT,
