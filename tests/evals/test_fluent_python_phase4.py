@@ -107,10 +107,15 @@ def build_single_rule_metric(
         evaluation_steps=[
             "1. Identify the one guideline stated in the criteria.",
             "2. Decide whether the code follows or violates that guideline.",
-            "3. Do not penalize the absence of anything unrelated to the "
-            "guideline; never require the snippet to be a single function.",
-            "4. Score 1.0 if the guideline is followed; deduct points only "
-            "for a direct violation of it.",
+            (
+                "3. Do not penalize the absence of anything unrelated to "
+                "the guideline; never require the snippet to be a "
+                "single function."
+            ),
+            (
+                "4. Score 1.0 if the guideline is followed; deduct points "
+                "only for a direct violation of it."
+            ),
         ],
         evaluation_params=[
             SingleTurnParams.INPUT,
