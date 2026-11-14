@@ -10,6 +10,7 @@ from harness_state.judge import (
     JUDGE_DEFAULT_MODEL,
     JUDGE_FALLBACK_MODEL,
     JudgeEvaluation,
+    aggregate_functional_votes,
     build_fluent_python_metric,
     build_gate_metric,
     build_judge_model,
@@ -820,3 +821,81 @@ def test_is_maintenance_or_refactor_reason_handles_unrelated_release_diff() -> N
         "enhancements as per the given test case parameters"
     )
     assert is_maintenance_or_refactor_reason(reason) is True
+
+
+def test_aggregate_functional_votes_usa_mediana_e_maioria() -> None:
+    """Business Rule: a Etapa 1 decide por mediana de score e maioria de
+    sucesso — um voto ruidoso de modelo pequeno não aprova nem reprova sozinho."""
+    score, success, reason = aggregate_functional_votes(
+        [(30, False, "alucinou desvio"), (90, True, "ok"), (90, True, "ok")]
+    )
+    assert (score, success) == (90, True)
+    assert reason == "ok"
+
+    score, success, _ = aggregate_functional_votes(
+        [(90, True, "ok"), (30, False, "ruim"), (20, False, "pior")]
+    )
+    assert (score, success) == (30, False)
+
+
+def test_aggregate_functional_votes_rejeita_lista_vazia() -> None:
+    """Business Rule: agregação sem votos é erro de programação, não veredito."""
+    with pytest.raises(ValueError, match="ao menos 1 voto"):
+        aggregate_functional_votes([])
+
+
+class RecordingMetric:
+    """Métrica funcional fake cujo score/sucesso variam a cada measure().
+
+    Attributes:
+        scores: Sequência de scores brutos (0..1) por votação.
+        oks: Sequência de booleanos de sucesso por votação.
+    """
+
+    def __init__(self, scores: list[float], oks: list[bool]) -> None:
+        """Inicializa a fila de votos."""
+        self._scores = list(scores)
+        self._oks = list(oks)
+        self.calls = 0
+        self.score: float = 0.0
+        self.reason = ""
+
+    def measure(self, _case: object) -> None:
+        """Consome o próximo voto pré-programado."""
+        self.score = self._scores[self.calls]
+        self._ok = self._oks[self.calls]
+        self.reason = f"vote-{self.calls}"
+        self.calls += 1
+
+    def is_successful(self) -> bool:
+        """Retorna o sucesso do último voto consumido."""
+        return self._ok
+
+
+@patch("harness_state.judge.build_judge_model")
+@patch("harness_state.judge.build_gate_metric")
+def test_stage1_recupera_de_voto_ruidoso_por_maioria(
+    mock_build_metric: MagicMock,
+    mock_build_model: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: um voto 30/100 entre dois 95+ resulta em APPROVED —
+    a maioria filtra o ruído do juiz de 7B sem afrouxar o limiar."""
+    spec_file = tmp_path / "SPEC-012.md"
+    spec_file.write_text("# SPEC-012\nRequisito: campo novo no payload", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+    novo_campo: str = \"\"\n", encoding="utf-8")
+
+    metric = RecordingMetric(scores=[0.3, 0.96, 0.96], oks=[False, True, True])
+    mock_build_metric.return_value = metric
+    mock_build_model.return_value = MagicMock()
+
+    result = evaluate_spec_diff(
+        spec_path=spec_file,
+        diffs_path=diffs_file,
+        model="agentic-qwen",
+        fallback_model="agentic-qwen",
+    )
+
+    assert result.status == "APPROVED"
+    assert metric.calls == 3
