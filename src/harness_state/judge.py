@@ -539,8 +539,15 @@ def evaluate_fluent_python_stage(
     Returns:
         Tupla `(fluent_score, fluent_success, fluent_reason)`.
     """
-    compact_code = python_diff[:4000]
-    compact_guidelines = fluent_guidelines[:3000]
+    # Contrato da doc-réua ("Actual Output: apenas o código adicionado"):
+    # material = linhas ADICIONADAS do diff Python. O diff integral
+    # truncado (evidência do release v0.8.0, run 43640363281) entregava
+    # cabeçalhos/hunks na frente de 4.000 chars e o juiz 7B leu
+    # "template or placeholder without any actual content" → 0/100.
+    python_added = extract_added_lines(python_diff, file_suffix=".py")
+    code_material = python_added if python_added.strip() else python_diff
+    compact_code = code_material[:4000]
+    compact_guidelines = FLUENT_STAGE_INPUT_PREAMBLE + fluent_guidelines[:3000]
 
     fluent_metric = build_fluent_python_metric(model=judge_model)
     fluent_test_case = LLMTestCase(input=compact_guidelines, actual_output=compact_code)
@@ -872,6 +879,17 @@ def compact_diff_for_functional_stage(
 
 
 FUNCTIONAL_JUDGE_VOTES = 3
+
+FLUENT_STAGE_INPUT_PREAMBLE = (
+    "PYTHON FLUENT ANTI-PATTERN AUDIT. The normative guidelines below are "
+    "the ONLY rubric. The CODE UNDER EVALUATION is the release diff's "
+    "added Python code, delivered in the actual_output. Judge ONLY "
+    "prohibited anti-patterns against these guidelines; code that adds "
+    "plain, idiomatic Python without a prohibited anti-pattern follows "
+    "the guidelines and MUST receive full score (1.0).\n\n"
+    "NORMATIVE GUIDELINES:\n"
+)
+
 
 FUNCTIONAL_STAGE_INPUT_PREAMBLE = (
     "NEGATIVE COMPLIANCE AUDIT OF THE RELEASE DIFF. The ONLY material "

@@ -15,6 +15,7 @@ from harness_state.judge import (
     build_fluent_python_metric,
     build_gate_metric,
     build_judge_model,
+    evaluate_fluent_python_stage,
     evaluate_spec_diff,
     main,
     measure_metric_with_majority,
@@ -354,6 +355,57 @@ def test_battery_is_a_cohesive_container_model() -> None:
     assert "FunctionalRuleBattery" in representation
     assert "2" in representation
     assert battery.is_approved is True
+
+
+@patch("harness_state.judge.build_fluent_python_metric")
+def test_fluent_stage_actual_output_is_added_code_not_diff_scaffolding(
+    mock_build_fluent: MagicMock,
+) -> None:
+    """Business Rule: o actual_output da Etapa 2 e o CODIGO ADICIONADO do
+    diff Python (extract_added_lines), nunca a frente do diff integral com
+    cabecalhos/hunks — evidencia do release v0.8.0 (run 43640363281): um
+    diff Python de 91k chars truncado em python_diff[:4000] entregou
+    scaffolding de diff e o juiz reprovou com "template or placeholder
+    without any actual content". O input declara papeis (rubrica vs codigo).
+    """
+    capture = CapturingMetric()
+    mock_build_fluent.return_value = capture
+
+    big_patch = (
+        "diff --git a/a.py b/a.py\n"
+        "index 0000000..1111111 100644\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1,2 +1,4 @@\n"
+        " x = 1\n"
+        "+def f() -> int:\n"
+        "+    return 1\n"
+        "diff --git a/b.py b/b.py\n"
+        "index 0000000..2222222 100644\n"
+        "--- a/b.py\n"
+        "+++ b/b.py\n"
+        "@@ -1,1 +1,3 @@\n"
+        "+def g() -> str:\n"
+        "+    return \"ok\"\n"
+    )
+    evaluate_fluent_python_stage(
+        judge_model=MagicMock(),
+        fluent_guidelines="SPEC-PY-01: use metodos especiais em modelos de dados.",
+        python_diff=big_patch,
+        func_score=100,
+        func_success=True,
+    )
+
+    assert capture.cases, "Etapa 2 nunca mediu o case"
+    case = capture.cases[0]
+    output_text = case.actual_output or ""
+    assert "diff --git" not in output_text
+    assert "@@ -1,2 +1,4 @@" not in output_text
+    assert "def f() -> int:" in output_text
+    assert 'return "ok"' in output_text
+    input_text = str(case.input)
+    assert "actual_output" in input_text or "actual output" in input_text.lower()
+    assert "SPEC-PY-01" in input_text
 
 
 def test_vote_retries_only_measurement_json_error() -> None:
