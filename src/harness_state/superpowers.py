@@ -18,9 +18,13 @@ def get_default_superpowers_cache_dir() -> Path:
     """Retorna o diretório padrão de cache para o repositório do Superpowers.
 
     Returns:
-        Path para `~/.cache/harness-state/superpowers` ou valor da variável de ambiente.
+        Path para `~/.cache/harness-state/superpowers` ou valor da variável de
+        ambiente canônica `HARNESS_SUPERPOWERS_CACHE_DIR`, aceitando a env legada
+        `FLYWHEEL_SUPERPOWERS_CACHE_DIR` como fallback de compatibilidade.
     """
-    env_cache = os.environ.get("HARNESS_SUPERPOWERS_CACHE_DIR")
+    env_cache = os.environ.get(
+        "HARNESS_SUPERPOWERS_CACHE_DIR"
+    ) or os.environ.get("FLYWHEEL_SUPERPOWERS_CACHE_DIR")
     if env_cache:
         return Path(env_cache).expanduser().resolve()
     return Path.home() / ".cache" / "harness-state" / "superpowers"

@@ -276,3 +276,25 @@ def test_install_agent_guidelines_redireciona_spec_para_pasta_specs(
         assert "docs/superpowers/specs/" in content
         assert "<project>-spec-hub/specs/SPEC-XXX.md" in content
         assert "`SPEC-XXX-<slug>.md`" in content
+
+
+def test_cache_dir_env_canonica_com_patrocinio_da_legada(monkeypatch) -> None:
+    """Business Rule: `HARNESS_SUPERPOWERS_CACHE_DIR` manda; a env legada
+    `FLYWHEEL_SUPERPOWERS_CACHE_DIR` segue aceita como fallback de compat;
+    sem nenhuma, o default do pacote é `~/.cache/harness-state/superpowers`.
+    """
+    from harness_state.superpowers import get_default_superpowers_cache_dir
+
+    monkeypatch.setenv(
+        "HARNESS_SUPERPOWERS_CACHE_DIR", "/cache/canonico"
+    )
+    monkeypatch.setenv("FLYWHEEL_SUPERPOWERS_CACHE_DIR", "/cache/legada")
+    assert get_default_superpowers_cache_dir() == Path("/cache/canonico")
+
+    monkeypatch.delenv("HARNESS_SUPERPOWERS_CACHE_DIR")
+    assert get_default_superpowers_cache_dir() == Path("/cache/legada")
+
+    monkeypatch.delenv("FLYWHEEL_SUPERPOWERS_CACHE_DIR")
+    assert get_default_superpowers_cache_dir() == (
+        Path.home() / ".cache" / "harness-state" / "superpowers"
+    )
