@@ -98,28 +98,19 @@ def build_single_rule_metric(
     return GEval(
         name=name,
         criteria=(
-            "Evaluate the generated Python code strictly against this single "
-            "rule; do not penalize the absence of other good practices: " + rule
+            "Assess the code against exactly ONE guideline, stated below. "
+            "Guideline: " + rule +
+            " Judge only compliance with this guideline. The size or "
+            "structure of the code is irrelevant: a snippet may contain "
+            "any number of functions and classes."
         ),
         evaluation_steps=[
-            (
-                "1. Read the SINGLE rule stated in the criteria; it is the "
-                "only subject of this evaluation."
-            ),
-            (
-                "2. Check whether the snippet demonstrably complies with "
-                "that one rule as written."
-            ),
-            (
-                "3. Ignore the absence of any other best practice, other "
-                "operator methods, other validated attributes, other "
-                "metaprogramming hierarchy levels or defensive checks not "
-                "required by the rule."
-            ),
-            (
-                "4. Score 1.0 when the rule is followed; deduct points ONLY "
-                "for a direct violation of that same rule."
-            ),
+            "1. Identify the one guideline stated in the criteria.",
+            "2. Decide whether the code follows or violates that guideline.",
+            "3. Do not penalize the absence of anything unrelated to the "
+            "guideline; never require the snippet to be a single function.",
+            "4. Score 1.0 if the guideline is followed; deduct points only "
+            "for a direct violation of it.",
         ],
         evaluation_params=[
             SingleTurnParams.INPUT,
