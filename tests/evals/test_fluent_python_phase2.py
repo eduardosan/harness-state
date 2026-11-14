@@ -9,6 +9,7 @@ from deepeval.models.llms import OpenAIModel
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from harness_state.judge import (
+    aggregate_functional_votes,
     build_judge_model,
     measure_metric_with_majority,
 )
@@ -148,35 +149,55 @@ def test_phase2_metric_factory_uses_single_rule_and_strict_threshold() -> None:
     assert "Phase 2" in metric.name
 
 
-def test_phase2_real_llm_approves_and_discriminates_each_rule() -> None:
-    """Business Rule: para TODAS as regras da Fase 2 o LLM real do harness
-    aprova por maioria a micro-amostra exemplar e pontua estritamente menor
-    o anti-padrao da mesma regra — avaliacao granular, verificavel por regra.
+def test_phase2_real_llm_approves_idiomatic_snippets() -> None:
+    """Business Rule: sanity calibração — o LLM do harness não pode reprovar o
+    conjunto de micro-exemplares idiomáticos das regras da Fase 2."""
+    failures: list[str] = []
+    for index, (rule, good, _bad) in enumerate(RULE_CASES, start=1):
+        name = f"Fluent Python Phase 2 Rule {index}"
+        metric = build_single_rule_metric(build_judge_model(), rule, name)
+        score, success, reason = measure_metric_with_majority(
+            metric,
+            LLMTestCase(
+                input="Implement the snippet described, following the rule.",
+                actual_output=good,
+            ),
+        )
+        if not success:
+            failures.append(f"{name}: score={score} reason={reason}")
+    assert not failures, "exemplares reprovados:\n" + "\n".join(failures)
 
-    A agregacao por regra acumula falhas e uma unica violacao aborta a
-    suite — gate real, sem parcialidade.
-    """
+
+def test_phase2_real_llm_forced_choice_discriminates_each_rule() -> None:
+    """Business Rule: para TODAS as regras da Fase 2 o juiz identifica o
+    segmento idiomático em escolha forçada A/B — discriminação confiável,
+    dado que o score absoluto de um 7B mostrou-se instável nos previews
+    (ora severo, ora carimbo total)."""
     failures: list[str] = []
     for index, (rule, good, bad) in enumerate(RULE_CASES, start=1):
         name = f"Fluent Python Phase 2 Rule {index}"
-        metric_good = build_single_rule_metric(build_judge_model(), rule, name)
-        metric_bad = build_single_rule_metric(build_judge_model(), rule, name + " (anti)")
-        case_input = "Implement the snippet described, following the rule."
-
-        score_good, success_good, reason_good = measure_metric_with_majority(
-            metric_good, LLMTestCase(input=case_input, actual_output=good)
+        if index % 2 == 1:
+            choice = "A"
+            snippets = f"Segment A:\n{good}\n\nSegment B:\n{bad}\n"
+        else:
+            choice = "B"
+            snippets = f"Segment A:\n{bad}\n\nSegment B:\n{good}\n"
+        prompt = (
+            "Guideline: " + rule + "\n\n" + snippets + "\n"
+            "Exactly one segment follows the guideline and exactly one "
+            "violates it. Respond with only the letter of the compliant "
+            "segment."
         )
-        score_bad, _, reason_bad = measure_metric_with_majority(
-            metric_bad, LLMTestCase(input=case_input, actual_output=bad), votes=1
-        )
-        if not success_good:
+        votes: list[tuple[int, bool, str]] = []
+        for _ in range(3):
+            raw = build_judge_model().generate(prompt) or ""
+            first_token = raw.strip().upper()[:1]
+            ok = first_token == choice
+            votes.append((100 if ok else 0, ok, raw.strip()[:60]))
+        score, success, reason = aggregate_functional_votes(votes)
+        if not success:
             failures.append(
-                f"{name}: exemplar reprovado score={score_good} reason={reason_good}"
+                f"{name}: esperado={choice} votos={reason} "
+                f"(score={score})"
             )
-        if not score_bad < score_good:
-            failures.append(
-                f"{name}: anti-padrão não discriminado bom={score_good} "
-                f"ruim={score_bad} reason={reason_bad}"
-            )
-    assert not failures, "\n".join(failures)
-
+    assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)
