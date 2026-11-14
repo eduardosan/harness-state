@@ -52,13 +52,32 @@ class TaskState(StrEnum):
 
 
 class SubTask(BaseModel):
-    """Sub-tarefa decomposta para um repositório específico."""
+    """Sub-tarefa decomposta para um repositório específico.
+
+    Attributes:
+        id: Identificador da subtarefa (ex: 'task-1').
+        repo: Repositório alvo (slug completo).
+        branch: Branch de trabalho da subtarefa.
+        status: Estado corrente no barramento.
+        pr_number: PR aberto para a subtarefa, quando existe.
+        issue_number: Issue de tracking da subtarefa no hub, quando existe.
+        issue_url: URL da issue de tracking.
+        expected_version: Versão esperada do núcleo após o release.
+        sub_spec_path: Caminho da sub-spec gerada no spoke.
+        last_worker: Identificador do último executor.
+        wave: Onda topológica (1 = raiz).
+        depends_on: IDs de subtarefas que precisam concluir antes.
+        updated_at: Timestamp UTC da última transição.
+    """
 
     id: str
     repo: str
     branch: str
     status: TaskState = TaskState.PENDING
     pr_number: int | None = None
+    issue_number: int | None = None
+    issue_url: str | None = None
+    expected_version: str | None = None
     sub_spec_path: str | None = None
     last_worker: str | None = None
     wave: int = 1
@@ -77,6 +96,14 @@ class SpecRun(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     tasks: dict[str, SubTask] = Field(default_factory=dict)
     correlation_uuid: str | None = None
+    product: list[str] = Field(default_factory=list)
+    capability: str = ""
+    scope: str = "platform"
+    origin_module: str = ""
+    declared_status: str = "APPROVED"
+    prompts: list[str] = Field(default_factory=list)
+    hub_pr_number: int | None = None
+    hub_pr_url: str | None = None
 
     def __len__(self) -> int:
         """Retorna o número total de subtarefas na especificação."""
@@ -134,6 +161,25 @@ class SpecRun(BaseModel):
     def pending_tasks(self) -> list[SubTask]:
         """Retorna a lista de subtarefas ainda pendentes de execução."""
         return [task for task in self.tasks.values() if task.status == TaskState.PENDING]
+
+    def get_next_unblocked_task(self) -> SubTask | None:
+        """Retorna a próxima subtarefa cujas dependências de ondas já concluíram.
+
+        Returns:
+            SubTask desbloqueada pronta para execução ou None se não houver.
+        """
+        ordered = sorted(self.tasks.values(), key=lambda t: (t.wave, t.id))
+        for task in ordered:
+            if task.status not in (TaskState.PENDING, TaskState.IN_PROGRESS):
+                continue
+            deps_satisfied = all(
+                self.tasks[dep_id].status in (TaskState.READY, TaskState.APPROVED)
+                for dep_id in task.depends_on
+                if dep_id in self.tasks
+            )
+            if deps_satisfied:
+                return task
+        return None
 
     def add_task(self, task: SubTask) -> None:
         """Adiciona ou substitui uma subtarefa na especificação.
