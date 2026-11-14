@@ -85,7 +85,7 @@ local-only).
    vivem no hub** (move, não espelho); arquitetura do pipeline fica no flywheel.
 4. **Governança:** alterações no flywheel somente via branch + PR (`gh pr create`),
    proibido push em `main` e criação de tags.
-5. **`ansible-hetzner-new` não está na org GitHub** (remote interno git@192.168.0.200):
+5. **`ansible-hetzner-new` não está na org GitHub** (remote interno git@{{SERVER_IP}}):
    o spoke de infra é resolvido como repositório local do workspace pelo fan-out
    (`locate_repo_dir`); GitHub não faz parte do fluxo desse repo.
 6. **Esta spec mestre é numerada `SPEC-002`** do hub (a `SPEC-001` já havia sido
@@ -107,7 +107,7 @@ local-only).
    deploy-slackbot.sh <wheel>"`, sem segredos de pipeline no deploy.
    O CI empacota o bot (`uv build` → wheel) como artefato. Contingência
    (**deploy-via-bastion**), seguindo o procedimento validado no GitLab-CI do
-   `new-blog`: `scp` até o bastion `pve2.for.mat.br:8` (exposto), `scp` interno
+   `new-blog`: `scp` até o bastion `{{INTERNAL_HOST}}:{{PORT}}` (exposto), `scp` interno
    ao CT e chamada em cadeia `ssh bastion "ssh slackbot-deploy@CT 'sudo
    deploy-slackbot.sh <wheel>'"`; todos os secrets obrigatórios (sem valores
    padrão). Em ambos os caminhos, o wrapper (único comando do sudoers) instala

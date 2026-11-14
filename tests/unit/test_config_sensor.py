@@ -67,14 +67,14 @@ def test_scan_file_detects_real_ip_in_test_files(tmp_path: Path) -> None:
     tests_dir.mkdir(exist_ok=True)
     test_file = tests_dir / "test_redis.py"
     test_file.write_text(
-        "def test_redis():\n    host = '192.168.20.5'\n",
+        "def test_redis():\n    host = '192.168.20.99'\n",
         encoding="utf-8",
     )
 
     violations = scan_file_for_config_violations(test_file, tmp_path)
     assert len(violations) == 1
     assert violations[0].code == "CFG003"
-    assert "192.168.20.5" in violations[0].message
+    assert "192.168.20.99" in violations[0].message
 
 
 def test_scan_file_allows_generic_mock_configs_in_test(tmp_path: Path) -> None:

@@ -1,0 +1,4 @@
+REDIS_HOST = 192.0.2.5
+SSH_USER = seu-usuario
+SSH_HOST = {{INTERNAL_HOST}}
+SSH_PORT = 22
