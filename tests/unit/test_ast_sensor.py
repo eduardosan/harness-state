@@ -372,3 +372,58 @@ def test_ast_sensor_special_methods_pythonic_behavior() -> None:
     assert repr(sensor).startswith("AstSensor(violations_count=0")
     assert len(sensor) == 0
     assert list(sensor) == []
+
+def test_dunder_names_no_modulo_nao_sao_flagrados() -> None:
+    """Business Rule: nomes dunder ('__all__', '__version__') NUNCA violam PYF007.
+
+    O prefixo '_' da regra é o de membros PRIVADOS; dunder conventions são
+    protocolo Python. O sensor canônico do flywheel exclui `__x__` e a
+    regressão aqui é `__all__` dos __init__.py do pacote (flagged indevido
+    na portagem que perdeu a exceção).
+    """
+    source = """
+    __all__ = ["alpha"]
+
+    __version__: str = "1.0"
+
+    __count__ = 3
+    """
+    assert rules_of(source) == []
+
+
+def test_dunder_funcao_no_modulo_nao_e_flagrada() -> None:
+    """Business Rule: `def __getattr__` no módulo é hook de protocolo, não '_' privado."""
+    source = """
+    def __getattr__(name: str):
+        raise AttributeError(name)
+    """
+    assert rules_of(source) == []
+
+
+def test_assign_local_com_underscore_dentro_de_funcao_nao_e_flagrado() -> None:
+    """Business Rule: variável local com '_' dentro de função não é escopo de módulo.
+
+    A regra proíbe prefixo privado em nomes de MÓDULO/classe; o sensor
+    canônico do flywheel só avalia Assign/AnnAssign fora de função
+    (`class_depth == 0 and not function_stack`).
+    """
+    source = """
+    def load():
+        _tmp = 1
+        _annotated: int = 2
+        return _tmp + _annotated
+    """
+    assert rules_of(source) == []
+
+
+def test_funcao_aninhada_com_dunder_nome_nao_e_flagrada_pelo_prefixo() -> None:
+    """Business Rule: dentro de classe, métodos dunder permanecem válidos."""
+    source = """
+    class Widget:
+        def __init__(self):
+            self._x = 1
+
+        def __repr__(self):
+            return "Widget"
+    """
+    assert rules_of(source) == []
