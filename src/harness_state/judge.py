@@ -762,6 +762,40 @@ def compact_diff_for_functional_stage(
     return compacted
 
 
+FUNCTIONAL_JUDGE_VOTES = 3
+
+
+def aggregate_functional_votes(
+    votes: list[tuple[int, bool, str]],
+) -> tuple[int, bool, str]:
+    """Agrega votos da Etapa 1 por mediana de score e maioria de sucesso.
+
+    Mitiga instabilidade de modelos pequenos em chamada única (mitigação,
+    não afrouxamento: a maioria ainda precisa aprovar e score abaixo do
+    limiar continua reprovando).
+
+    Args:
+        votes: Tuplas (score, sucesso, motivo), uma por medição.
+
+    Returns:
+        (mediana dos scores, maioria simples de sucesso, motivo do voto
+        mediano) — determinístico.
+
+    Raises:
+        ValueError: Se a lista de votos vier vazia.
+    """
+    if not votes:
+        raise ValueError("aggregate_functional_votes requer ao menos 1 voto")
+    ordered = sorted(votes, key=lambda v: v[0])
+    median_vote = ordered[len(ordered) // 2]
+    median_score = median_vote[0]
+    successes = sum(1 for v in ordered if v[1])
+    is_success = successes * 2 > len(ordered)
+    reason_votes = [v[2] for v in ordered if v[2]]
+    reason = reason_votes[len(reason_votes) // 2] if reason_votes else median_vote[2]
+    return median_score, is_success, reason
+
+
 def run_judge_metrics_pipeline(
     effective_spec_id: str,
     spec_content: str,
@@ -788,14 +822,26 @@ def run_judge_metrics_pipeline(
     )
     compacted_spec = compact_spec_for_functional_stage(spec_content)
     func_test_case = LLMTestCase(input=compacted_spec, actual_output=compacted_diff)
-    functional_metric.measure(func_test_case)
-    func_score = normalize_deepeval_score(functional_metric.score)
-    func_success = functional_metric.is_successful()
-    func_reason = (
-        str(functional_metric.reason)
-        if functional_metric.reason
-        else "Avaliacao funcional concluida."
-    )
+    votes: list[tuple[int, bool, str]] = []
+    for _ in range(FUNCTIONAL_JUDGE_VOTES):
+        functional_metric.measure(func_test_case)
+        votes.append(
+            (
+                normalize_deepeval_score(functional_metric.score),
+                bool(functional_metric.is_successful()),
+                str(functional_metric.reason or ""),
+            )
+        )
+    func_score, func_success, func_reason = aggregate_functional_votes(votes)
+    if not func_reason:
+        func_reason = "Avaliacao funcional concluida."
+
+    if len(votes) > 1:
+        print(
+            f"[Judge Etapa 1] {len(votes)} votos -> score {func_score}/100 "
+            f"(votes={[(v[0], v[1]) for v in votes]})",
+            file=sys.stderr,
+        )
 
     if not func_success and is_maintenance_or_refactor_reason(func_reason):
         func_score = 100
