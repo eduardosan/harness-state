@@ -184,7 +184,7 @@ jobs:
         run: |
           gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
 
-      - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao flywheel)
+      - name: Gerar token de instalação da GitHub App (autoavaliação + dispatch cross-repo)
         if: steps.tag.outputs.tag != ''
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -192,6 +192,19 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: eduardosan
+
+      - name: Gatilhar autoavaliação da release (DeepEval + LLM-as-a-Judge)
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # Push de tags feito com o GITHUB_TOKEN do próprio run NÃO dispara
+          # workflows (anti-recursão do GitHub). O gate é acionado de forma
+          # explícita via workflow_dispatch com o token da App, referenciando
+          # a tag recém-cortada no SHA da main.
+          gh workflow run "Tag Code Evaluation and Gate" \
+            --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
 
       - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
         if: steps.tag.outputs.tag != ''

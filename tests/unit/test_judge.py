@@ -8,6 +8,7 @@ import pytest
 
 from harness_state.judge import (
     JUDGE_DEFAULT_MODEL,
+    JUDGE_FALLBACK_MODEL,
     JudgeEvaluation,
     build_fluent_python_metric,
     build_gate_metric,
@@ -63,17 +64,19 @@ def test_fallback_judge_resolves_ecosystem_default_model(
     assert fallback == "agentic-qwen"
 
 
-def test_fallback_judge_falls_back_to_ecosystem_default_model(
+def test_fallback_judge_ignores_agent_default_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Business Rule: sem vars de fallback, o tier 2 usa `LLM_DEFAULT_MODEL`."""
+    """Business Rule: sem vars de fallback, o tier 2 usa a constante do juiz —
+    NUNCA `LLM_DEFAULT_MODEL`, que é o default dos agentes (id de provedor que
+    pode nem existir no endpoint Ollama do juiz, como `opencode/...`)."""
     monkeypatch.delenv("JUDGE_FALLBACK_MODEL", raising=False)
     monkeypatch.delenv("LLM_JUDGE_FALLBACK_MODEL", raising=False)
     monkeypatch.setenv("LLM_DEFAULT_MODEL", "opencode/glm-5.3-flash-free")
 
     fallback = resolve_fallback_judge_model()
 
-    assert fallback == "opencode/glm-5.3-flash-free"
+    assert fallback == JUDGE_FALLBACK_MODEL == "agentic-qwen"
 
 
 def test_build_judge_model_defaults_to_opencode_free_tier(
