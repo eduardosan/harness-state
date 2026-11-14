@@ -250,6 +250,79 @@ class FlakyJsonMetric:
         return self.score >= 0.9
 
 
+class CapturingMetric:
+    """Metrica fake que registra o LLMTestCase recebido e sempre aprova."""
+
+    def __init__(self, name: str = "Gate Rule Capture") -> None:
+        """Inicializa o registro."""
+        self.name = name
+        self.cases: list[LLMTestCase] = []
+        self.score = 0.95
+        self.reason = "ok"
+
+    def measure(self, test_case: LLMTestCase) -> None:
+        """Registra o case e devolve voto de aprovacao."""
+        self.cases.append(test_case)
+        self.score = 0.95
+
+    def is_successful(self) -> bool:
+        """Sempre aprova (cenario feliz do pipeline)."""
+        return True
+
+
+@patch("harness_state.judge.build_judge_model")
+@patch("harness_state.judge.build_gate_metric")
+def test_stage1_input_declares_that_code_lives_in_actual_output(
+    mock_build_metric: MagicMock,
+    mock_build_model: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: o input da Etapa 1 deve declarar explicitamente que o
+    codigo avaliado esta no actual_output (diff) e que a spec e somente
+    contexto — evidencia do preview 43631932135: o juiz de producao votou as
+    3 regras contra "the input does not contain any code snippet... a
+    detailed architectural description" porque o par (spec, diff) nao rotulou
+    os papeis."""
+    capture = CapturingMetric()
+    mock_build_metric.return_value = capture
+    mock_build_model.return_value = MagicMock()
+
+    spec_file = tmp_path / "SPEC-013.md"
+    spec_file.write_text("# SPEC-013\nRequisito: bateria de regras\n", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+def f() -> int:\n+    return 1\n", encoding="utf-8")
+
+    evaluate_spec_diff(
+        spec_path=spec_file,
+        diffs_path=diffs_file,
+        model="agentic-qwen",
+        fallback_model="agentic-qwen",
+    )
+
+    assert capture.cases, "Etapa 1 nunca mediu o case"
+    case = capture.cases[0]
+    input_text = str(case.input)
+    assert "actual_output" in input_text or "actual output" in input_text.lower()
+    assert "context" in input_text.lower()
+    assert "SPEC-013" in input_text
+
+
+def test_fluent_metric_excludes_evaluation_harness_classes() -> None:
+    """Business Rule: a metrica fluente deve isentar explicitamente as
+    classes de infraestrutura de avaliacao (juiz, metricas, baterias) dos
+    metodos de container — evidencia do preview 43631932135: o juiz cobrou
+    __len__/__repr__/__iter__ de FunctionalRuleBattery, que nao e modelo de
+    dados do dominio."""
+    dummy_model = build_judge_model(
+        base_url="http://127.0.0.1:11435/v1",
+        api_key="ollama",
+    )
+    metric = build_fluent_python_metric(model=dummy_model)
+    criteria = (metric.criteria or "").lower()
+    assert "batteries" in criteria
+    assert "evaluation judges" in criteria
+
+
 def test_vote_retries_only_measurement_json_error() -> None:
     """Business Rule: um voto com JSON invalido do juiz e falha do MEDIDOR,
     nao veredito de conformidade: o voto e re-tentado; rejeicoes validas

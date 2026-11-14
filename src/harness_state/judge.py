@@ -330,7 +330,8 @@ def build_fluent_python_metric(model: OpenAIModel) -> GEval:
         "avoid severe prohibited anti-patterns from the normative guidelines (input). "
         "Primitive types (bool, int, str) and None as default arguments are completely "
         "immutable and NEVER violate SPEC-PY-06. "
-        "Utility classes (e.g. AST visitors, CLI commands, handlers) and functions "
+        "Utility classes (e.g. AST visitors, CLI commands, handlers, "
+        "evaluation judges, DeepEval metrics and rule batteries) and functions "
         "are fully exempt from implementing special container methods "
         "(__len__, __repr__, __iter__). "
         "If the code contains no prohibited anti-patterns, award full score (1.0)."
@@ -843,6 +844,15 @@ def compact_diff_for_functional_stage(
 
 FUNCTIONAL_JUDGE_VOTES = 3
 
+FUNCTIONAL_STAGE_INPUT_PREAMBLE = (
+    "ROLE DECLARATION FOR THE JUDGE: the CODE UNDER EVALUATION is the "
+    "unified git diff delivered in the actual_output. The reference "
+    "specification reproduced below is CONTEXT ONLY - it documents intent "
+    "and is not the material being judged. Apply every guideline strictly "
+    "to the diff found in actual_output.\n\n"
+    "REFERENCE SPECIFICATION (context only):\n"
+)
+
 
 def aggregate_functional_votes(
     votes: list[tuple[int, bool, str]],
@@ -1056,7 +1066,10 @@ def run_judge_metrics_pipeline(
         diffs_content, spec_content=spec_content
     )
     compacted_spec = compact_spec_for_functional_stage(spec_content)
-    func_test_case = LLMTestCase(input=compacted_spec, actual_output=compacted_diff)
+    func_test_case = LLMTestCase(
+        input=FUNCTIONAL_STAGE_INPUT_PREAMBLE + compacted_spec,
+        actual_output=compacted_diff,
+    )
     func_votes: list[tuple[int, bool, str]] = []
     for _ in range(FUNCTIONAL_JUDGE_VOTES):
         functional_metric.measure(func_test_case)
