@@ -7,6 +7,20 @@
 
 ## 1. Visão Geral e Motivação Arquitetural
 
+> **Sequência canônica normativa (produção de release, LLM):** quando
+> `release.yml` corta uma tag, o gate de autoavaliação é disparado via
+> `workflow_dispatch` (último passo do job, nunca bloqueia o
+> `core-released` ao flywheel) e executa, nesta ordem obrigatória:
+> **1)** `fluent-python-eval` — o harness de Python Fluente dependente de
+> LLM (DeepEval, `tests/evals/test_fluent_python_phase1-4.py`) valida as
+> specs SPEC-PY que servem de régua ao juiz; **2)** `prompts-eval` —
+> DeepEval das diretrizes `specs/prompts/`; **3)** só então o
+> `judge.py` emite o veredito do diff da release (APPROVED >= 90).
+> Em PRs não há chamadas de LLM (apenas camadas determinísticas).
+> Alterações de topologia/ordem da esteira de release exigem emenda
+> simultânea a esta seção — o juiz mede o diff contra ela.
+
+
 A avaliação de código gerado por agentes de IA ou engenheiros de software em um ecossistema federado distribuído impõe desafios fundamentais de precisão, custo computacional e latência:
 
 1. **Heterogeneidade de Objetivos Cognitivos:** Uma alteração de código precisa ser avaliada simultaneamente quanto a:
