@@ -1,25 +1,24 @@
-"""Suíte de avaliação das especificações da Fase 1 de Python Fluente.
-
-Valida as especificações PY-01 (Modelo de Dados), PY-05 (Classes de Dados)
-e PY-06 (Referências e Mutabilidade), além de definir a métrica GEval
-para aferir a conformidade semântica de código gerado por LLMs.
-"""
+"""Suíte de avaliação por regra da Fase 1 de Python Fluente (PY-01/05/06)."""
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from deepeval.metrics import GEval
 from deepeval.models.llms import OpenAIModel
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
-# Garante desativacao de telemetria externa do DeepEval
+from harness_state.judge import (
+    aggregate_functional_votes,
+    build_judge_model,
+    measure_metric_with_majority,
+)
+
 os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 
-# As suítes de avaliação exigem um endpoint LLM configurado. Em runners sem
-# LLM (ex.: `test.yml` em ubuntu-latest) a suíte inteira é pulada com aviso,
-# mantendo o gate real apenas no `spec-ci.yml` (self-hosted, vars LLM_*).
+# As suítes de avaliação exercitam o LLM real do harness. Em runners sem
+# endpoint (ex.: test.yml em ubuntu-latest) a suíte se autopula; o gate
+# roda nos releases (job fluent-python-eval / preview dispatchado).
 pytestmark = pytest.mark.skipif(
     not (
         os.environ.get("OPENAI_BASE_URL", "")
@@ -36,44 +35,16 @@ PHASE1_SPECS = [
     "SPEC-PY-06-references-and-mutability.md",
 ]
 
-
-def build_phase1_metric(model: OpenAIModel) -> GEval:
-    """Cria a métrica GEval para avaliar conformidade com a Fase 1.
-
-    Args:
-        model: Instância do modelo LLM-as-a-Judge.
-
-    Returns:
-        Instância de GEval configurada para avaliar Data Model, Dataclasses
-        e Ausência de Padrões Mutáveis Perigosos.
-    """
-    criteria = (
-        "The generated Python code must follow Fluent Python standards: "
-        "1. Never use mutable default parameter values (e.g., list=[]); use None. "
-        "2. Domain entities must use @dataclass(slots=True, kw_only=True) with "
-        "field(default_factory=...) for mutable attributes, or NamedTuple. "
-        "3. Classes representing domain objects or collections must implement "
-        "appropriate Python Data Model dunders like __repr__ and __len__."
-    )
-    return GEval(
-        name="Fluent Python Phase 1 Compliance",
-        criteria=criteria,
-        evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT],
-        model=model,
-        threshold=0.9,
-    )
-
-
 @pytest.mark.parametrize("spec_filename", PHASE1_SPECS)
 def test_phase1_spec_files_exist_and_follow_template(spec_filename: str) -> None:
-    """Business Rule: specs da Fase 1 devem existir e seguir o molde canônico.
+    """Business Rule: specs da Fase 1 devem existir e seguir o molde canonico.
 
-    Cada spec deve conter as seções: Fonte, Regras normativas,
-    Anti-padrão → forma idiomática, Enforcement e Exceções,
-    além de indicar a origem [Livro] ou [Política].
+    Cada spec deve conter as secoes: Fonte, Regras normativas,
+    Anti-padrao -> forma idiomatica, Enforcement e Excecoes,
+    alem de indicar a origem [Livro] ou [Politica].
     """
     spec_path = Path("specs/python") / spec_filename
-    assert spec_path.is_file(), f"Arquivo não encontrado: {spec_path}"
+    assert spec_path.is_file(), f"Arquivo nao encontrado: {spec_path}"
 
     content = spec_path.read_text(encoding="utf-8")
     assert "## 1. Fonte" in content
@@ -84,52 +55,145 @@ def test_phase1_spec_files_exist_and_follow_template(spec_filename: str) -> None
     assert "[Livro]" in content or "[Política]" in content
 
 
-def test_phase1_metric_structure() -> None:
-    """Business Rule: a métrica da Fase 1 deve ter threshold 0.9 e nome canônico."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
-    )
-    metric = build_phase1_metric(model=dummy_model)
-    assert metric.threshold == 0.9
-    assert metric.name == "Fluent Python Phase 1 Compliance"
+RULE_CASES: list[tuple[str, str, str]] = [
+    (
+        'Never use mutable default parameter values (e.g., def f(items=[])); use None and build the list inside the body.',
+        'def collect(items: list[str] | None = None) -> list[str]:\n    return list(items) if items is not None else []\n',
+        "def collect(items: list[str] = []) -> list[str]:\n    items.append('x')\n    return items\n",
+    ),
+    (
+        'Domain entities must use @dataclass(slots=True, kw_only=True) with field(default_factory=...) for mutable attributes (or NamedTuple), instead of hand-rolled dict subclasses.',
+        'from dataclasses import dataclass, field\n\n\n@dataclass(slots=True, kw_only=True)\nclass Order:\n    id: int\n    items: list[str] = field(default_factory=list)\n',
+        "class Order(dict):\n    def __init__(self, id, items=None):\n        self['items'] = items or []\n",
+    ),
+    (
+        'Classes representing collections must implement Python Data Model dunders (e.g., __len__, __repr__) instead of Java-style accessor methods.',
+        'class Cart:\n    def __init__(self) -> None:\n        self._items: list[str] = []\n\n    def __len__(self) -> int:\n        return len(self._items)\n\n    def __repr__(self) -> str:\n        return f"Cart({len(self)})"\n',
+        'class Cart:\n    def __init__(self) -> None:\n        self._items: list[str] = []\n\n    def get_size(self):\n        return len(self._items)\n',
+    ),
+]
 
 
-def test_phase1_evaluation_mocked() -> None:
-    """Business Rule: código idiomático da Fase 1 é aprovado pela avaliação GEval."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
-    )
-    metric = build_phase1_metric(model=dummy_model)
+def build_single_rule_metric(
+    model: OpenAIModel, rule: str, name: str
+) -> GEval:
+    """Cria uma GEval de regra única para avaliar conformidade pontual.
 
-    test_case = LLMTestCase(
-        input="Write a customer class with an order list and add_order method.",
-        actual_output=(
-            "from dataclasses import dataclass, field\n\n"
-            "@dataclass(slots=True, kw_only=True)\n"
-            "class Customer:\n"
-            "    id: int\n"
-            "    name: str\n"
-            "    orders: list[str] = field(default_factory=list)\n\n"
-            "    def add_order(self, order_id: str) -> None:\n"
-            "        self.orders.append(order_id)\n"
+    Multiplas regras em uma só criteria induzem juizes 7B a pontuarem
+    ausencias de demonstracao como violacoes; cada metrica aqui carrega
+    exatamente UMA norma da fase, com micro-amostra dedicada.
+
+    Args:
+        model: Instancia OpenAIModel apontada ao endpoint do harness.
+        rule: Texto da regra normativa unica a fiscalizar.
+        name: Nome da metrica (visivel no relatorio DeepEval).
+
+    Returns:
+        Instancia GEval com threshold 0.9 e params input+output.
+    """
+    return GEval(
+        name=name,
+        criteria=(
+            "Assess the code against exactly ONE guideline, stated below. "
+            "Guideline: " + rule +
+            " Judge only compliance with this guideline. The size or "
+            "structure of the code is irrelevant: a snippet may contain "
+            "any number of functions and classes."
         ),
+        evaluation_steps=[
+            "1. Identify the one guideline stated in the criteria.",
+            "2. Decide whether the code follows or violates that guideline.",
+            (
+                "3. Do not penalize the absence of anything unrelated to "
+                "the guideline; never require the snippet to be a "
+                "single function."
+            ),
+            (
+                "4. Score 1.0 if the guideline is followed; deduct points "
+                "only for a direct violation of it."
+            ),
+        ],
+        evaluation_params=[
+            SingleTurnParams.INPUT,
+            SingleTurnParams.ACTUAL_OUTPUT,
+        ],
+        model=model,
+        threshold=0.9,
     )
 
-    metric.measure = MagicMock()
-    metric.score = 1.0
-    metric.reason = "Usa @dataclass(slots=True, kw_only=True) e default_factory."
-    metric.is_successful = MagicMock(return_value=True)
 
-    metric.measure(test_case)
-    assert metric.is_successful() is True
-    phase_score = metric.score
-    phase_threshold = metric.threshold
-    assert (
-        phase_score is not None
-        and phase_threshold is not None
-        and phase_score >= phase_threshold
+def build_phase1_metric(model: OpenAIModel) -> GEval:
+    """Compat: metrica agregada da fase (mantida p/ testes de estrutura)."""
+    return build_single_rule_metric(
+        model,
+        RULE_CASES[0][0],
+        "Fluent Python Phase 1 Rule 1",
     )
+
+
+
+def test_phase1_metric_factory_uses_single_rule_and_strict_threshold() -> None:
+    """Business Rule: cada metrica de avaliacao carrega UMA regra com
+    threshold 0.9 e nome da fase — granularidade e o contrato anti-aleucinacao."""
+    metric = build_single_rule_metric(
+        build_judge_model(), "Test rule text.", "Fluent Python Phase 1 Rule X"
+    )
+    assert metric.threshold == 0.9
+    criteria = metric.criteria or ""
+    assert "Test rule text." in criteria
+    assert "Phase 1" in metric.name
+
+
+def test_phase1_real_llm_approves_idiomatic_snippets() -> None:
+    """Business Rule: sanity calibração — o LLM do harness não pode reprovar o
+    conjunto de micro-exemplares idiomáticos das regras da Fase 1."""
+    failures: list[str] = []
+    for index, (rule, good, _bad) in enumerate(RULE_CASES, start=1):
+        name = f"Fluent Python Phase 1 Rule {index}"
+        metric = build_single_rule_metric(build_judge_model(), rule, name)
+        score, success, reason = measure_metric_with_majority(
+            metric,
+            LLMTestCase(
+                input="Implement the snippet described, following the rule.",
+                actual_output=good,
+            ),
+        )
+        if not success:
+            failures.append(f"{name}: score={score} reason={reason}")
+    assert not failures, "exemplares reprovados:\n" + "\n".join(failures)
+
+
+def test_phase1_real_llm_forced_choice_discriminates_each_rule() -> None:
+    """Business Rule: para TODAS as regras da Fase 1 o juiz identifica o
+    segmento idiomático em escolha forçada A/B — discriminação confiável,
+    dado que o score absoluto de um 7B mostrou-se instável nos previews
+    (ora severo, ora carimbo total)."""
+    failures: list[str] = []
+    for index, (rule, good, bad) in enumerate(RULE_CASES, start=1):
+        name = f"Fluent Python Phase 1 Rule {index}"
+        if index % 2 == 1:
+            choice = "A"
+            snippets = f"Segment A:\n{good}\n\nSegment B:\n{bad}\n"
+        else:
+            choice = "B"
+            snippets = f"Segment A:\n{bad}\n\nSegment B:\n{good}\n"
+        prompt = (
+            "Guideline: " + rule + "\n\n" + snippets + "\n"
+            "Exactly one segment follows the guideline and exactly one "
+            "violates it. Respond with only the letter of the compliant "
+            "segment."
+        )
+        votes: list[tuple[int, bool, str]] = []
+        for _ in range(3):
+            generated = build_judge_model().generate(prompt)
+            raw = str(generated[0]) if isinstance(generated, tuple) else str(generated)
+            first_token = raw.strip().upper()[:1]
+            ok = first_token == choice
+            votes.append((100 if ok else 0, ok, raw.strip()[:60]))
+        score, success, reason = aggregate_functional_votes(votes)
+        if not success:
+            failures.append(
+                f"{name}: esperado={choice} votos={reason} "
+                f"(score={score})"
+            )
+    assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)

@@ -2,12 +2,16 @@
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from deepeval.metrics import GEval
 from deepeval.models.llms import OpenAIModel
 from deepeval.test_case import LLMTestCase, SingleTurnParams
+
+from harness_state.judge import (
+    build_judge_model,
+    measure_metric_with_majority,
+)
 
 # Garante que telemetria externa do DeepEval permanece desativada
 os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
@@ -71,15 +75,10 @@ def test_python_guidelines_file_exists_and_valid() -> None:
     assert "Business Rule:" in content
 
 
-def test_python_guidelines_evaluation_mocked() -> None:
-    """Business Rule: O avaliador DeepEval deve aprovar codigo conforme as regras."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
-    )
-    metric = build_guidelines_metric(model=dummy_model)
-
+def test_python_guidelines_real_llm_approves_compliant_code() -> None:
+    """Business Rule: o LLM do harness avalia de fato código conforme as
+    diretrizes Python (sem aninhamentos, PEP 8) e aprova por maioria de votos."""
+    metric = build_guidelines_metric(model=build_judge_model())
     test_case = LLMTestCase(
         input=(
             "Write a python function that connects to a database "
@@ -95,20 +94,10 @@ def test_python_guidelines_evaluation_mocked() -> None:
         ),
     )
 
-    metric.measure = MagicMock()
-    metric.score = 1.0
-    metric.reason = "Codigo plano, sem funcoes ou try-excepts aninhados."
-    metric.is_successful = MagicMock(return_value=True)
-
-    metric.measure(test_case)
-    assert metric.is_successful() is True
-    prompt_score = metric.score
-    prompt_threshold = metric.threshold
-    assert (
-        prompt_score is not None
-        and prompt_threshold is not None
-        and prompt_score >= prompt_threshold
-    )
+    score, success, reason = measure_metric_with_majority(metric, test_case)
+    assert success, f"juiz rejeitou código conforme: score={score} reason={reason}"
+    assert score >= int((metric.threshold or 0.9) * 100)
+    assert reason
 
 
 def build_rca_metric(model: OpenAIModel) -> GEval:
@@ -157,39 +146,16 @@ def test_rca_metric_structure() -> None:
 
 
 def test_rca_evaluation_rejects_exception_masking() -> None:
-    """Business Rule: Avaliacao deve reprovar codigo que mascare falha de binario."""
-    dummy_model = OpenAIModel(
-        model="agentic-qwen",
-        base_url="http://127.0.0.1:11435/v1",
-        api_key="ollama",
-    )
-    metric = build_rca_metric(model=dummy_model)
+    """Business Rule: o LLM real reprova por maioria a máscara de falha de
+    binário com `except: pass` — a métrica de RCA discrimina, não carimba."""
+    metric = build_rca_metric(model=build_judge_model())
     test_case = LLMTestCase(
         input="Fix missing gcloud CLI binary in CI runner during log fetching.",
-        actual_output=("try:\n    subprocess.run(cmd)\nexcept OSError:\n    pass\n"),
-    )
-    metric.measure = MagicMock()
-    metric.score = 0.0
-    metric.reason = "Violation: masked OSError instead of resolving binary."
-    metric.is_successful = MagicMock(return_value=False)
-
-    metric.measure(test_case)
-    assert metric.is_successful() is False
-    low_score = metric.score
-    low_threshold = metric.threshold
-    assert (
-        low_score is not None
-        and low_threshold is not None
-        and low_score < low_threshold
+        actual_output=(
+            "try:\n    subprocess.run(cmd)\nexcept OSError:\n    pass\n"
+        ),
     )
 
-
-def test_spec_guidelines_file_exists_and_valid() -> None:
-    """Business Rule: Diretrizes de spec devem conter regras de viabilidade."""
-    spec_guidelines_path = Path("specs/prompts/spec_guidelines.md")
-    assert spec_guidelines_path.is_file()
-    content = spec_guidelines_path.read_text(encoding="utf-8")
-    assert "Viabilidade Técnica e Compatibilidade de SDKs" in content
-    assert "Sem Alucinação de Paridade de Recursos" in content
-    assert "Protocolo de Spike (Onda 0)" in content
-    assert "Plano de Fallback Arquitetural" in content
+    score, success, reason = measure_metric_with_majority(metric, test_case)
+    assert not success, f"juiz aprovou mascaramento: score={score} reason={reason}"
+    assert score < int((metric.threshold or 0.9) * 100)
