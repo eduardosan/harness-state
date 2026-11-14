@@ -7,18 +7,26 @@
 
 ## 1. Visão Geral e Motivação Arquitetural
 
-> **Sequência canônica normativa (produção de release, LLM):** quando
-> `release.yml` corta uma tag, o gate de autoavaliação é disparado via
-> `workflow_dispatch` (último passo do job, nunca bloqueia o
-> `core-released` ao flywheel) e executa, nesta ordem obrigatória:
-> **1)** `fluent-python-eval` — o harness de Python Fluente dependente de
-> LLM (DeepEval, `tests/evals/test_fluent_python_phase1-4.py`) valida as
-> specs SPEC-PY que servem de régua ao juiz; **2)** `prompts-eval` —
-> DeepEval das diretrizes `specs/prompts/`; **3)** só então o
-> `judge.py` emite o veredito do diff da release (APPROVED >= 90).
-> Em PRs não há chamadas de LLM (apenas camadas determinísticas).
-> Alterações de topologia/ordem da esteira de release exigem emenda
-> simultânea a esta seção — o juiz mede o diff contra ela.
+> **Sequência canônica normativa (produção de release, LLM — gate
+> SÍNCRONO pré-corte):** o `release.yml` flui em três jobs encadeados:
+> `release-candidate` calcula a versão candidata (Conventional Commits);
+> `pre-release-eval` CHAMA (workflow_call) o `tag-code-evaluation.yml`
+> com a tag candidata ainda inexistente, que executa em ordem
+> obrigatória **1)** `fluent-python-eval` — o harness de Python Fluente
+> dependente de LLM (DeepEval, `tests/evals/test_fluent_python_phase1-4.py`)
+> valida as specs SPEC-PY que servem de régua ao juiz; **2)**
+> `prompts-eval` — DeepEval das diretrizes `specs/prompts/`; **3)** o
+> `judge.py` emite o veredito sobre `git diff LATEST_TAG..HEAD`
+> (conteúdo idêntico ao que seria taggeado; APPROVED >= 90). Só então o
+> `tag-and-release` corta a tag, publica a GitHub Release e notifica o
+> flywheel (`core-released`). Veredito REJECTED ou falha de avaliação
+> BLOQUEIA o corte (job posterior skipped) — a release só existe com o
+> núcleo aprovado pelo juiz. Em PRs não há chamadas de LLM (apenas
+> camadas determinísticas: sensores AST PYF, ruff, isort, pyright,
+> pytest). Alterações de topologia/ordem da esteira de release exigem
+> emenda simultânea a esta seção — o juiz mede o diff contra ela; diffs
+> puramente documentais/mde manutenção são acolhidos pela regra de
+> isenção (skip não-código / manutenção).
 
 
 A avaliação de código gerado por agentes de IA ou engenheiros de software em um ecossistema federado distribuído impõe desafios fundamentais de precisão, custo computacional e latência:
