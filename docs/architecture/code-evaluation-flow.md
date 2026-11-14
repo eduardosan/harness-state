@@ -149,6 +149,43 @@ sequenceDiagram
 
 ---
 
+### 2.4. Sequência Canônica de Etapas de LLM na Produção de Release
+
+Na esteira do **harness-state** (núcleo autovalidador), as chamadas de LLM
+ocorrem **exclusivamente durante a produção de um novo release** — nunca em
+PRs, onde apenas camadas determinísticas validam (sensores AST PYF, ruff,
+isort, pyright, pytest sem rede). Quando `release.yml` corta a tag, o gate de
+autoavaliação é disparado como **último passo** do job via
+`workflow_dispatch` (`GITHUB_TOKEN` com `actions: write`), com a seguinte
+ordem obrigatória:
+
+```mermaid
+flowchart LR
+    Tag["release.yml corta a tag"] --> Disp["workflow_dispatch do gate"]
+    Disp --> F["1. fluent-python-eval: harness LLM de Python Fluente (DeepEval, fases 1-4 das SPEC-PY)"]
+    F --> P["2. prompts-eval: DeepEval das diretrizes normativas (specs/prompts)"]
+    P --> J["3. LLM-as-a-Judge do diff da release (judge.py)"]
+    J --> V{"Score >= 90 e sem violações?"}
+    V -->|Sim| OK["Release íntegra (APPROVED)"]
+    V -->|Não| NG["Marcação de falha + evaluation_report.json"]
+```
+
+* **Por que o harness de Python Fluente vem antes do juiz:** as suítes
+  `tests/evals/test_fluent_python_phase*.py` validam as próprias specs
+  normativas (SPEC-PY-*) que o `spec_router.py` injeta na Etapa 2 do juiz.
+  Julgar o diff da release com diretrizes não verificadas seria emitir
+  veredito sobre régua potencialmente torta; a cadeia falha cedo (jobs com
+  `needs`), economizando o endpoint e preservando a auditabilidade.
+* **O juiz avalia o diff da release contra este documento**
+  (`docs/architecture/code-evaluation-flow.md`): mudanças na topologia da
+  esteira (novos jobs, nova ordem de execução) exigem emendar este spec na
+  mesma release — caso contrário o veredito legítimo é REJECTED por
+  desvio de arquitetura.
+* O gate **nunca bloqueia** a notificação `core-released` ao flywheel: por
+  isso o dispatch do gate é o último passo do job de release.
+
+---
+
 ## 3. Detalhamento das Três Camadas de Avaliação
 
 ### 3.1. Camada 1: Sensores Determinísticos Locais (Fail-Fast Estático)
