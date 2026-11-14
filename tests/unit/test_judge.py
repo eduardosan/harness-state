@@ -17,6 +17,7 @@ from harness_state.judge import (
     build_judge_model,
     evaluate_spec_diff,
     main,
+    measure_metric_with_majority,
     resolve_fallback_judge_model,
 )
 
@@ -208,6 +209,88 @@ class BatteryRuleFake:
     def is_successful(self) -> bool:
         """Retorna o sucesso do ultimo voto consumido."""
         return self._ok
+
+
+class FlakyJsonMetric:
+    """Metrica fake que devolve JSON invalido nas primeiras medicoes.
+
+    Attributes:
+        name: Identificador da regra.
+        failures: Quantidade de medicoes que lanciam erro de parsing.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        failures: int,
+        score: float = 0.95,
+        error_message: str = (
+            "Evaluation LLM outputted an invalid JSON. "
+            "Please use a better evaluation model."
+        ),
+    ) -> None:
+        """Configura quantas medicoes falham antes de retornar o score."""
+        self.name = name
+        self._failures = failures
+        self._score = score
+        self._error_message = error_message
+        self.calls = 0
+        self.reason = ""
+
+    def measure(self, _case: object) -> None:
+        """Simula o erro transitorio de parsing do DeepEval e depois vota."""
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise RuntimeError(self._error_message)
+        self.score = self._score
+        self.reason = "ok after retry"
+
+    def is_successful(self) -> bool:
+        """Retorna sucesso conforme o score configurado."""
+        return self.score >= 0.9
+
+
+def test_vote_retries_only_measurement_json_error() -> None:
+    """Business Rule: um voto com JSON invalido do juiz e falha do MEDIDOR,
+    nao veredito de conformidade: o voto e re-tentado; rejeicoes validas
+    continuam virando votos (sem retry) e o esgotamento das tentativas
+    propaga a excecao de forma audivel (proibido mascaramento)."""
+    metric = FlakyJsonMetric("Gate Rule 1", failures=1)
+    score, ok, _reason = measure_metric_with_majority(
+        metric, LLMTestCase(input="spec", actual_output="diff"), votes=1
+    )
+    assert metric.calls == 2
+    assert ok is True
+    assert score == 95
+
+    schema = FlakyJsonMetric(
+        "Gate Rule 1",
+        failures=1,
+        error_message=(
+            "2 validation errors for ReasonScore\n"
+            "reason\n  Field required [type=missing, ...]\nscore\n"
+            "  Field required [type=missing, ...]"
+        ),
+    )
+    schema_score, schema_ok, _schema_reason = measure_metric_with_majority(
+        schema, LLMTestCase(input="spec", actual_output="diff"), votes=1
+    )
+    assert schema.calls == 2
+    assert schema_ok is True
+    assert schema_score == 95
+
+    broken = FlakyJsonMetric("Gate Rule 1", failures=99)
+    try:
+        measure_metric_with_majority(
+            broken, LLMTestCase(input="spec", actual_output="diff"), votes=1
+        )
+    except RuntimeError as error:
+        assert "invalid JSON" in str(error)
+    else:
+        raise AssertionError(
+            "Business Rule: exauridas as tentativas o erro do medidor DEVE "
+            "propagar — engoli-lo seria mascaramento"
+        )
 
 
 def test_battery_approves_only_when_every_rule_passes_by_majority() -> None:

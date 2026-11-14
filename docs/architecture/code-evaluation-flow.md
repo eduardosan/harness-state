@@ -231,6 +231,11 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
 - **Critério de Aprovação:** todas as regras aprovadas por maioria; o score é a
   proporção de regras aprovadas × 100 e cada regra reprovada é reportada nominalmente
   com prefixo `[Funcional]`.
+- **Robustez do medidor (não mascaramento):** um voto cujo output do juiz viole o
+  contrato JSON do DeepEval é erro de *medição*, não veredito de conformidade — o voto
+  é re-tentado (`collect_metric_vote`, 2 tentativas). Exauridas as tentativas, a
+  exceção propaga e o tier falha de forma audível no relatório. Rejeições legítimas
+  nunca são re-tentadas (vêm como voto, não como exceção).
 - **Fundamento (evidência, não palpite):** o desenho anterior — um único GEval absoluto
   de alinhamento spec↔diff — provou-se **bimodal** nos previews com dois modelos
   (`gemma4:e2b`: 10/False repetido contra um motivo que elogiava as mudanças;

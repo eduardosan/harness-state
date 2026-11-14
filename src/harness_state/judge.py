@@ -925,8 +925,83 @@ def build_single_rule_metric(
     )
 
 
+MEASUREMENT_JSON_RETRIES = 2
+
+MEASUREMENT_ERROR_MARKERS: tuple[str, ...] = (
+    "invalid JSON",
+    "validation errors for ReasonScore",
+)
+
+
+def is_measurement_json_error(error: BaseException) -> bool:
+    """Reconhece a falha do MEDIDOR DeepEval ao interpretar o output do juiz.
+
+    O juiz local (gemma4:e2b) provou-se instavel exatamente aqui: nas suites
+    (snippets curtos) e 100% disciplina de schema; na Etapa 1 (input longo
+    spec+diff) falhou 3 vezes seguidas em duas formas — o texto "invalid
+    JSON" e o ReasonScore violado (output em outro esquema, sem reason/score).
+    Ambas sao o mesmo fenomeno: a chamada de inferencia nao produziu o
+    contrato que o medidor espera. Nao e veredito de conformidade: rejeicoes
+    legitimas vem como voto, nao como excecao.
+
+    Args:
+        error: Excecao lancada por uma medicao GEval.
+
+    Returns:
+        True quando o erro e de contrato-de-output-violado-pelo-juiz.
+    """
+    return any(marker in str(error) for marker in MEASUREMENT_ERROR_MARKERS)
+
+
+def collect_metric_vote(
+    metric: Any,
+    test_case: LLMTestCase,
+    attempts: int = MEASUREMENT_JSON_RETRIES,
+) -> tuple[int, bool, str]:
+    """Colhe um voto da metrica, re-tentando apenas erro de parsing do juiz.
+
+    Robustez do instrumento, nao mascaramento: um tropeco de JSON do LLM
+    avaliador e transitorio e re-tenta; qualquer outro erro (inclusive
+    rejeicao de conformidade expressa como excecao) e o esgotamento das
+    tentativas PROPAGAM a excecao, que o juiz reporta como falha de tier de
+    forma audivel — nunca silenciosa.
+
+    Args:
+        metric: Metrica GEval (ou equivalente duck-typed) a medir.
+        test_case: Par (input, actual_output) avaliado.
+        attempts: Tentativas totais para erro de parsing do medidor.
+
+    Returns:
+        Voto (score normalizado, sucesso, motivo).
+
+    Raises:
+        Exception: A ultima excecao de parsing quando todas as tentativas
+            falham, ou imediatamente qualquer erro que nao seja de parsing.
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            metric.measure(test_case)
+            return (
+                normalize_deepeval_score(metric.score),
+                bool(metric.is_successful()),
+                str(metric.reason or ""),
+            )
+        except Exception as vote_error:
+            if not is_measurement_json_error(vote_error):
+                raise
+            last_error = vote_error
+            LOGGER.warning(
+                "Voto do juiz com JSON invalido; re-tentando (%d/%d)",
+                attempt,
+                attempts,
+            )
+    assert last_error is not None
+    raise last_error
+
+
 def measure_metric_with_majority(
-    metric: GEval,
+    metric: Any,
     test_case: LLMTestCase,
     votes: int = FUNCTIONAL_JUDGE_VOTES,
 ) -> tuple[int, bool, str]:
@@ -952,14 +1027,7 @@ def measure_metric_with_majority(
         raise ValueError("measure_metric_with_majority exige ao menos 1 voto")
     collected: list[tuple[int, bool, str]] = []
     for _ in range(votes):
-        metric.measure(test_case)
-        collected.append(
-            (
-                normalize_deepeval_score(metric.score),
-                bool(metric.is_successful()),
-                str(metric.reason or ""),
-            )
-        )
+        collected.append(collect_metric_vote(metric, test_case))
     return aggregate_functional_votes(collected)
 
 
