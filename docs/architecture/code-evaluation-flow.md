@@ -258,8 +258,15 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
 #### Etapa 2: Avaliação de Conformidade Idiomática (Python Fluente)
 - **Métrica:** `build_fluent_python_metric` (`GEval`).
 - **Condição de Execução:** Disparada exclusivamente quando `collect_fluent_python_guidelines` detecta padrões ativados em arquivos Python.
-- **Input:** Regras normativas concisas das specs de Python Fluente acionadas.
+- **Input:** Framing fixo `FLUENT_STAGE_INPUT_PREAMBLE` (declara que a rubrica
+  são as diretrizes e que o código avaliado está no `actual_output`) +
+  regras normativas concisas das specs de Python Fluente acionadas.
 - **Actual Output:** Apenas o código adicionado (`extract_added_lines`).
+  O diff Python integral truncado (release v0.8.0, run 43640363281) entregava
+  cabeçalhos/`@@` de diff nas primeiras 4.000 chars de um diff de 91k e o juiz
+  reprovou com "template or placeholder without any actual content" — código
+  adicionado puro é o material do contrato (com fallback ao diff integral
+  apenas quando não há linhas adicionadas extraíveis).
 - **Critérios Avaliados:**
   1. Utilização dos métodos especiais do Python Data Model sobre métodos convencionais arbitrários.
   2. Adesão aos contratos de imutabilidade, `@dataclass(slots=True)` e boas práticas de tipagem.
