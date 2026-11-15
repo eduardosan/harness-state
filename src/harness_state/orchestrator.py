@@ -16,6 +16,7 @@ from harness_state.capabilities import DomainInspector
 from harness_state.client import StateStore, StateStoreProtocol
 from harness_state.collector import collect_diffs
 from harness_state.config import (
+    ConfigurationError,
     HarnessLocalConfig,
     SSHTunnelManager,
     TunnelStatus,
@@ -623,11 +624,15 @@ class HarnessOrchestrator:
             self.config = config
             self.config_path = config_path
         else:
-            self.config, self.config_path = load_harness_config(
-                project_root=self.project_root,
-                explicit_path=config_path,
-                ensure_exists=False,
-            )
+            try:
+                self.config, self.config_path = load_harness_config(
+                    project_root=self.project_root,
+                    explicit_path=config_path,
+                    ensure_exists=False,
+                )
+            except ConfigurationError:
+                self.config = HarnessLocalConfig()
+                self.config_path = None
         self.tunnel_manager = tunnel_manager or SSHTunnelManager()
         self.store: StateStoreProtocol = store or StateStore()
         self.spec_hub_dir = (
