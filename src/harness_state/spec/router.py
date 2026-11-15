@@ -12,8 +12,8 @@ from harness_state.spec_router import (
     extract_normative_rules,
     filter_diff_by_suffix,
     find_spec_file_in_dir,
-    format_guidelines_block,
     get_spec_reference_dir,
+    line_matches_diff_target_suffix,
     route_code,
     route_diff,
 )
@@ -26,8 +26,8 @@ __all__ = [
     "extract_normative_rules",
     "filter_diff_by_suffix",
     "find_spec_file_in_dir",
-    "format_guidelines_block",
     "get_spec_reference_dir",
+    "line_matches_diff_target_suffix",
     "route_code",
     "route_diff",
 ]
