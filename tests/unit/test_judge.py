@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from deepeval.test_case import LLMTestCase
-
 from harness_state.judge import (
     JUDGE_DEFAULT_MODEL,
     JUDGE_FALLBACK_MODEL,

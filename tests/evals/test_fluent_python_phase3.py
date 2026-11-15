@@ -7,7 +7,6 @@ import pytest
 from deepeval.metrics import GEval
 from deepeval.models.llms import OpenAIModel
 from deepeval.test_case import SingleTurnParams
-
 from harness_state.judge import (
     aggregate_functional_votes,
     build_judge_model,

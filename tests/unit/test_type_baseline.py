@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from harness_state.sensors.type_baseline import (
     Diagnostic,
     compare,

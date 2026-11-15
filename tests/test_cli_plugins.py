@@ -3,9 +3,8 @@
 from typing import Any
 
 import click
-import pytest
-
 import harness_state.cli as cli_module
+import pytest
 from harness_state.cli import main
 
 

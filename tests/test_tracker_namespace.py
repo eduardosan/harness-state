@@ -1,7 +1,6 @@
 """Testes do namespace por ecossistema no State Tracker (SPEC-005 C1)."""
 
 import pytest
-
 from harness_state.client import (
     InMemoryStateStore,
     parse_spec_reference,

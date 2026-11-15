@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from harness_state.agents import AgentConfig
 from harness_state.catalog import (
     AgentCatalog,

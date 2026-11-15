@@ -195,6 +195,9 @@ class SpecRun(BaseModel):
         status: TaskState,
         worker_id: str | None = None,
         pr_number: int | None = None,
+        expected_version: str | None = None,
+        issue_number: int | None = None,
+        issue_url: str | None = None,
     ) -> SubTask | None:
         """Atualiza os dados de uma subtarefa e recalcula o status global da spec.
 
@@ -203,6 +206,9 @@ class SpecRun(BaseModel):
             status: Novo estado atribuído à subtarefa.
             worker_id: Identificador opcional do worker responsável.
             pr_number: Número opcional do Pull Request associado.
+            expected_version: Versão esperada para release da subtarefa.
+            issue_number: Número opcional da issue de rastreamento no GitHub.
+            issue_url: URL opcional da issue de rastreamento no GitHub.
 
         Returns:
             SubTask atualizada ou None se a subtarefa não existir.
@@ -217,6 +223,12 @@ class SpecRun(BaseModel):
             task.last_worker = worker_id
         if pr_number is not None:
             task.pr_number = pr_number
+        if expected_version is not None:
+            task.expected_version = expected_version
+        if issue_number is not None:
+            task.issue_number = issue_number
+        if issue_url is not None:
+            task.issue_url = issue_url
 
         if self.is_complete:
             self.status = TaskState.READY

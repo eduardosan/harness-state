@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-
 from harness_state.cli import (
     main,
     parse_spec_markdown,
