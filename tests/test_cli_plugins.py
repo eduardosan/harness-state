@@ -3,8 +3,9 @@
 from typing import Any
 
 import click
-import harness_state.cli as cli_module
 import pytest
+
+import harness_state.cli as cli_module
 from harness_state.cli import main
 
 

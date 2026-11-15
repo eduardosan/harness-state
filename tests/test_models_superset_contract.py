@@ -9,6 +9,7 @@ orchestrator em produção.
 from datetime import UTC, datetime
 
 import pytest
+
 from harness_state.models import SpecRun, SubTask, TaskState
 
 

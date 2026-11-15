@@ -1,6 +1,7 @@
 """Testes unitários dos modelos e lógica de domínio do estado."""
 
 import pytest
+
 from harness_state.models import SpecRun, SubTask, TaskState
 
 

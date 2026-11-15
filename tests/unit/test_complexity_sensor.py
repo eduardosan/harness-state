@@ -4,6 +4,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
 from harness_state.installer import install_module_harness
 from harness_state.sensors.complexity_sensor import (
     ComplexityViolation,

@@ -4,6 +4,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
 from harness_state.sensors.ast_sensor import AstSensor, check_source, main
 
 

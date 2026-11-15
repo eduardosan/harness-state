@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from harness_state.judge import evaluate_spec_diff
 
 

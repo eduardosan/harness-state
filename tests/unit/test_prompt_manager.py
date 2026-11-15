@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from harness_state.prompt_manager import LangfusePromptManager, PromptManagementError
 
 
