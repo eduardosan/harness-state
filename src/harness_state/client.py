@@ -1,7 +1,11 @@
 """Cliente de comunicação assíncrona com o Redis central e protocolos de persistência."""
 
+import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import TracebackType
-from typing import Protocol, Self, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 import redis.asyncio as aioredis
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,10 +48,28 @@ def redis_spec_key(ecosystem: str, spec_id: str) -> str:
     return f"spec:{spec_id}"
 
 
+def derive_hub_ecosystem(hub_dir: Path) -> str:
+    """Deriva o namespace do ecossistema a partir do nome do hub (SPEC-005 C1).
+
+    Remove o sufixo `-spec-hub` do nome do diretório do hub:
+    `harness-spec-hub` → `harness`; `paralax-spec-hub` → `paralax`.
+
+    Args:
+        hub_dir: Diretório raiz do spec-hub local.
+
+    Returns:
+        Identificador do ecossistema para namespace no Redis.
+    """
+    name = hub_dir.name
+    if name.endswith("-spec-hub"):
+        return name[:-len("-spec-hub")]
+    return name
+
+
 class Settings(BaseSettings):
     """Configurações de conexão do Redis para o barramento central."""
 
-    model_config = SettingsConfigDict(env_prefix="HARNESS_")
+    model_config = SettingsConfigDict(env_prefix="HARNESS_", extra="ignore")
 
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
@@ -85,6 +107,9 @@ class StateStoreProtocol(Protocol):
         status: TaskState,
         worker_id: str | None = None,
         pr_number: int | None = None,
+        expected_version: str | None = None,
+        issue_number: int | None = None,
+        issue_url: str | None = None,
     ) -> SpecRun | None:
         """Atualiza o estado de uma subtarefa pertencente a uma especificação.
 
@@ -94,6 +119,9 @@ class StateStoreProtocol(Protocol):
             status: Novo estado atribuído.
             worker_id: Identificador opcional do worker.
             pr_number: Número opcional do Pull Request.
+            expected_version: Versão esperada para release da subtarefa.
+            issue_number: Número opcional da issue de rastreamento no GitHub.
+            issue_url: URL opcional da issue de rastreamento no GitHub.
 
         Returns:
             SpecRun atualizada ou None se a especificação ou subtarefa não for encontrada.
@@ -156,6 +184,9 @@ class InMemoryStateStore:
         status: TaskState,
         worker_id: str | None = None,
         pr_number: int | None = None,
+        expected_version: str | None = None,
+        issue_number: int | None = None,
+        issue_url: str | None = None,
     ) -> SpecRun | None:
         """Atualiza a subtarefa no modelo em memória e persiste a alteração.
 
@@ -165,6 +196,9 @@ class InMemoryStateStore:
             status: Novo estado da subtarefa.
             worker_id: Identificador opcional do worker.
             pr_number: Número opcional do Pull Request.
+            expected_version: Versão esperada para release da subtarefa.
+            issue_number: Número opcional da issue de rastreamento no GitHub.
+            issue_url: URL opcional da issue de rastreamento no GitHub.
 
         Returns:
             SpecRun atualizada ou None caso não exista.
@@ -174,7 +208,15 @@ class InMemoryStateStore:
         if spec is None or task_id not in spec:
             return None
 
-        spec.update_task_status(task_id, status, worker_id=worker_id, pr_number=pr_number)
+        spec.update_task_status(
+            task_id,
+            status,
+            worker_id=worker_id,
+            pr_number=pr_number,
+            expected_version=expected_version,
+            issue_number=issue_number,
+            issue_url=issue_url,
+        )
         return spec.model_copy(deep=True)
 
     async def aclose(self) -> None:
@@ -207,13 +249,31 @@ class InMemoryStateStore:
 class StateStore:
     """Repositório de estado persistido no Redis central do Proxmox."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        redis_url: str | None = None,
+        reconnect_hook: Callable[[], bool | Awaitable[bool]] | None = None,
+        client_factory: Callable[[], aioredis.Redis] | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 0.5,
+    ) -> None:
         """Inicializa o repositório de estado com as configurações fornecidas.
 
         Args:
             settings: Instância de Settings opcional com parâmetros de rede do Redis.
+            redis_url: URL opcional direta de conexão com o Redis.
+            reconnect_hook: Callback para restabelecer túnel SSH caso a conexão caia.
+            client_factory: Fábrica opcional de cliente Redis para testes.
+            max_retries: Número máximo de tentativas sob falha de conexão.
+            retry_delay: Intervalo base em segundos entre retentativas.
         """
         self.settings: Settings = settings or Settings()
+        self.redis_url = redis_url
+        self.reconnect_hook = reconnect_hook
+        self.client_factory = client_factory
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self._client: aioredis.Redis | None = None
 
     def get_client(self) -> aioredis.Redis:
@@ -223,14 +283,67 @@ class StateStore:
             Instância de conexão ativa com o Redis.
         """
         if self._client is None:
-            self._client = aioredis.Redis(
-                host=self.settings.redis_host,
-                port=self.settings.redis_port,
-                db=self.settings.redis_db,
-                password=self.settings.redis_password,
-                decode_responses=True,
-            )
+            if self.client_factory is not None:
+                self._client = self.client_factory()
+            elif self.redis_url:
+                self._client = aioredis.from_url(
+                    self.redis_url,
+                    decode_responses=True,
+                )
+            else:
+                self._client = aioredis.Redis(
+                    host=self.settings.redis_host,
+                    port=self.settings.redis_port,
+                    db=self.settings.redis_db,
+                    password=self.settings.redis_password,
+                    decode_responses=True,
+                )
         return self._client
+
+    async def _handle_connection_failure(self) -> None:
+        """Encerra client corrompido e aciona o hook de reconexão do túnel."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+        if self.reconnect_hook is not None:
+            hook_res = self.reconnect_hook()
+            if inspect.isawaitable(hook_res):
+                await hook_res
+
+    async def _run_command(self, cmd_name: str, *args: Any, **kwargs: Any) -> Any:
+        """Executa um comando no Redis com reconexão de túnel e retry.
+
+        Args:
+            cmd_name: Nome do método a invocar no client Redis (ex: get, set).
+            *args: Argumentos posicionais do comando.
+            **kwargs: Argumentos nomeados do comando.
+
+        Returns:
+            Resposta retornada pelo Redis.
+
+        Raises:
+            Exception: Se todas as tentativas falharem.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries):
+            client = self.get_client()
+            try:
+                cmd_fn = getattr(client, cmd_name)
+                return await cmd_fn(*args, **kwargs)
+            except (
+                aioredis.ConnectionError,
+                aioredis.TimeoutError,
+                ConnectionError,
+                OSError,
+            ) as exc:
+                last_exc = exc
+                await self._handle_connection_failure()
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+
+        if last_exc is not None:
+            raise last_exc
 
     async def aclose(self) -> None:
         """Encerra a conexão ativa com o Redis com segurança."""
@@ -267,10 +380,9 @@ class StateStore:
         Args:
             spec: Instância da especificação a ser persistida.
         """
-        client = self.get_client()
         ecosystem, spec_id = parse_spec_reference(spec.spec_id)
         key = redis_spec_key(ecosystem, spec_id)
-        await client.set(key, spec.model_dump_json())
+        await self._run_command("set", key, spec.model_dump_json())
 
     async def get_spec(self, spec_id: str) -> SpecRun | None:
         """Obtém uma especificação pelo seu identificador único.
@@ -281,10 +393,9 @@ class StateStore:
         Returns:
             SpecRun correspondente ou None se não encontrada.
         """
-        client = self.get_client()
         ecosystem, parsed_id = parse_spec_reference(spec_id)
         key = redis_spec_key(ecosystem, parsed_id)
-        data = await client.get(key)
+        data = await self._run_command("get", key)
         if not data:
             return None
         return SpecRun.model_validate_json(data)
@@ -296,6 +407,9 @@ class StateStore:
         status: TaskState,
         worker_id: str | None = None,
         pr_number: int | None = None,
+        expected_version: str | None = None,
+        issue_number: int | None = None,
+        issue_url: str | None = None,
     ) -> SpecRun | None:
         """Atualiza atomicamente o estado de uma subtarefa e recalcula o status global da spec.
 
@@ -305,6 +419,9 @@ class StateStore:
             status: Novo estado atribuído.
             worker_id: Identificador opcional do worker responsável.
             pr_number: Número opcional do Pull Request.
+            expected_version: Versão esperada para release da subtarefa.
+            issue_number: Número opcional da issue de rastreamento no GitHub.
+            issue_url: URL opcional da issue de rastreamento no GitHub.
 
         Returns:
             SpecRun atualizada ou None se não encontrada.
@@ -313,6 +430,14 @@ class StateStore:
         if spec is None or task_id not in spec:
             return None
 
-        spec.update_task_status(task_id, status, worker_id=worker_id, pr_number=pr_number)
+        spec.update_task_status(
+            task_id,
+            status,
+            worker_id=worker_id,
+            pr_number=pr_number,
+            expected_version=expected_version,
+            issue_number=issue_number,
+            issue_url=issue_url,
+        )
         await self.save_spec(spec)
         return spec

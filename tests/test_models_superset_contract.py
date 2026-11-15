@@ -166,3 +166,36 @@ def test_metadados_invalidos_rejeitados_pelo_pydantic() -> None:
     bad["hub_pr_number"] = "não-é-inteiro-valido"
     with pytest.raises(ValueError):
         SpecRun.model_validate(bad)
+
+
+def test_update_task_status_aceita_kwargs_de_tracking_issue_e_versao() -> None:
+    """Business Rule: update_task_status aceita os 3 kwargs do orquestrador
+    (expected_version, issue_number, issue_url) para manter paridade com o
+    flywheel sem regressão de tipagem."""
+    run = SpecRun(
+        spec_id="SPEC-042",
+        title="t",
+        author="a",
+        tasks={
+            "task-1": SubTask(
+                id="task-1",
+                repo="eduardosan/x",
+                branch="agent/task-1",
+                status=TaskState.PENDING,
+            )
+        },
+    )
+    updated = run.update_task_status(
+        "task-1",
+        TaskState.READY,
+        worker_id="runner-42",
+        pr_number=100,
+        expected_version="0.8.0",
+        issue_number=55,
+        issue_url="https://github.com/eduardosan/hub/issues/55",
+    )
+    assert updated is not None
+    assert updated.expected_version == "0.8.0"
+    assert updated.issue_number == 55
+    assert updated.issue_url == "https://github.com/eduardosan/hub/issues/55"
+
