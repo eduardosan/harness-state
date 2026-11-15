@@ -605,7 +605,7 @@ def test_evaluate_spec_diff_staged_both_approved(
     mock_build_fluent: MagicMock,
     tmp_path: Path,
 ) -> None:
-    """Business Rule: Avaliacao em etapas aprova quando funcional e fluente passam."""
+    """Business Rule: Gate funcional aprovado produz veredito APPROVED diretamente."""
     spec_file = tmp_path / "SPEC-001.md"
     spec_file.write_text("# SPEC-001\nRequisito: Entidade Pedido", encoding="utf-8")
     diffs_file = tmp_path / "diffs.patch"
@@ -625,12 +625,6 @@ def test_evaluate_spec_diff_staged_both_approved(
     mock_func_metric.is_successful.return_value = True
     mock_build_func.return_value = mock_func_metric
 
-    mock_fluent_metric = MagicMock()
-    mock_fluent_metric.score = 0.90
-    mock_fluent_metric.reason = "Uso correto de dataclasses."
-    mock_fluent_metric.is_successful.return_value = True
-    mock_build_fluent.return_value = mock_fluent_metric
-
     eval_result = evaluate_spec_diff(
         spec_path=spec_file,
         diffs_path=diffs_file,
@@ -643,20 +637,10 @@ def test_evaluate_spec_diff_staged_both_approved(
         eval_result.compliance_score is not None and eval_result.compliance_score >= 90
     )
     assert mock_build_func.called
-    assert mock_build_fluent.called
-    # Contrato da Etapa 1 (evidencia do preview 43633346713): o JUIZ recebe
-    # apenas o framing de auditoria negativa como input e o diff como
-    # actual_output — a spec fica FORA do contexto, pois com ela presente o
-    # modelo local tratou "nao alinhar com a especificacao" como violacao
-    # das regras negativas (3x0/100). O caso de teste ainda exige que o CLI
-    # leu a spec (arquivo obrigatorio p/ spec-id, logs e roteamento).
+    assert not mock_build_fluent.called
     called_func_case = mock_func_metric.measure.call_args[0][0]
     assert "# SPEC-001" not in called_func_case.input
     assert "+@dataclass" in called_func_case.actual_output
-    # Verifica que a chamada fluente recebeu diretrizes normativas e linhas adicionadas
-    called_fluent_case = mock_fluent_metric.measure.call_args[0][0]
-    assert "SPEC-PY-05" in called_fluent_case.input
-    assert "@dataclass" in called_fluent_case.actual_output
 
 
 @patch("harness_state.judge.build_fluent_python_metric")
@@ -666,7 +650,7 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
     mock_build_fluent: MagicMock,
     tmp_path: Path,
 ) -> None:
-    """Business Rule: Falha na etapa de Python Fluente rejeita o veredito com tag."""
+    """Business Rule: Aprovacao funcional nao e reprovada por LLM de estilo no judge."""
     spec_file = tmp_path / "SPEC-001.md"
     spec_file.write_text("# SPEC-001\nRequisito: Entidade Pedido", encoding="utf-8")
     diffs_file = tmp_path / "diffs.patch"
@@ -686,12 +670,6 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
     mock_func_metric.is_successful.return_value = True
     mock_build_func.return_value = mock_func_metric
 
-    mock_fluent_metric = MagicMock()
-    mock_fluent_metric.score = 0.60
-    mock_fluent_metric.reason = "Anti-padrao detectado na construcao da classe."
-    mock_fluent_metric.is_successful.return_value = False
-    mock_build_fluent.return_value = mock_fluent_metric
-
     eval_result = evaluate_spec_diff(
         spec_path=spec_file,
         diffs_path=diffs_file,
@@ -699,8 +677,9 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
         api_key="ollama",
     )
 
-    assert eval_result.status == "REJECTED"
-    assert any("[Python Fluente]" in v for v in eval_result.violations)
+    assert eval_result.status == "APPROVED"
+    assert eval_result.compliance_score == 95
+    assert not mock_build_fluent.called
 
 
 @patch("harness_state.judge.build_fluent_python_metric")

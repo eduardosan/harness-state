@@ -1,10 +1,13 @@
 """Avaliador LLM-as-a-Judge canônico do harness (self-validation) via DeepEval.
 
 Portado do agentic-flywheel: avalia diffs de release/contribuição contra a
-especificação arquitetural `docs/architecture/code-evaluation-flow.md` em
-etapas especializadas, com tiers de modelo (primário/fallback) resolvidos por
-variáveis de ambiente canônicas do ecossistema (LLM_JUDGE_MODEL,
-LLM_DEFAULT_MODEL, LLM_INTERNAL_BASE_URL, LLM_EXTERNAL_BASE_URL).
+especificação arquitetural e integridade de contratos no Gate Funcional,
+com tiers de modelo (primário/fallback) resolvidos por variáveis de ambiente
+canônicas do ecossistema (LLM_JUDGE_MODEL, LLM_DEFAULT_MODEL,
+LLM_INTERNAL_BASE_URL, LLM_EXTERNAL_BASE_URL). Padrões idiomáticos de código
+(ex: Python Fluente) são providos como instruções de harness aos agentes
+e auditados deterministicamente por sensores AST e linters no CI, mantendo o
+juiz focado exclusivamente na integridade funcional e de contratos.
 """
 
 import argparse
@@ -1097,9 +1100,14 @@ def run_judge_metrics_pipeline(
     diffs_content: str,
     judge_model: Any,
     functional_metric: Any,
-    fluent_guidelines: str,
+    fluent_guidelines: str = "",
 ) -> JudgeEvaluation:
-    """Executa a Etapa 1 (Funcional) e Etapa 2 (Python Fluente) e consolida o veredito.
+    """Executa a avaliação funcional do Gate e consolida o veredito.
+
+    O Gate 5 avalia exclusivamente a conformidade funcional do diff contra
+    as regras normativas do gate e especificação. Diretrizes de Python Fluente
+    são instruídas aos agentes de código via harness skills e auditadas
+    deterministicamente via sensores AST e linters, sem intermediação de LLM.
 
     Args:
         effective_spec_id: Identificador da especificação avaliada.
@@ -1107,10 +1115,10 @@ def run_judge_metrics_pipeline(
         diffs_content: Conteúdo integral dos diffs.
         judge_model: Instância do modelo juiz DeepEval.
         functional_metric: Métrica GEval funcional.
-        fluent_guidelines: Diretrizes de Python Fluente aplicáveis.
+        fluent_guidelines: Diretrizes normativas legadas mantidas por compatibilidade.
 
     Returns:
-        Instância de `JudgeEvaluation` populada.
+        Instância de `JudgeEvaluation` populada com o veredito funcional.
     """
     compacted_diff = compact_diff_for_functional_stage(
         diffs_content, spec_content=spec_content
@@ -1135,7 +1143,7 @@ def run_judge_metrics_pipeline(
 
     if len(func_votes) > 1:
         print(
-            f"[Judge Etapa 1] {len(func_votes)} votos -> score {func_score}/100 "
+            f"[Judge Gate Funcional] {len(func_votes)} votos -> score {func_score}/100 "
             f"(func_votes={[(v[0], v[1]) for v in func_votes]})",
             file=sys.stderr,
         )
@@ -1157,36 +1165,10 @@ def run_judge_metrics_pipeline(
             "Ajustar codigo nos repositorios para cobrir requisitos funcionais."
         )
 
-    python_diff = extract_python_diff_for_fluent_check(diffs_content)
-    if not (fluent_guidelines and python_diff.strip()):
-        return build_final_judge_evaluation(
-            effective_spec_id=effective_spec_id,
-            compliance_score=func_score,
-            is_approved=bool(func_success and func_score >= 90),
-            summary=func_reason,
-            violations=violations,
-            recommendations=recommendations,
-        )
+    compliance_score = func_score
+    is_approved = bool(func_success and func_score >= 90)
+    summary = func_reason
 
-    fluent_score, fluent_success, fluent_reason = evaluate_fluent_python_stage(
-        judge_model=judge_model,
-        fluent_guidelines=fluent_guidelines,
-        python_diff=python_diff,
-        func_score=func_score,
-        func_success=func_success,
-    )
-    if not fluent_success or fluent_score < 90:
-        violations.append(f"[Python Fluente] {fluent_reason}")
-        recommendations.append(
-            "Refatorar anti-padroes de Python conforme as specs ativadas."
-        )
-
-    compliance_score = round(0.7 * func_score + 0.3 * fluent_score)
-    is_approved = bool(func_success and fluent_success and compliance_score >= 90)
-    summary = (
-        f"Funcional: {func_score}/100 | Python Fluente: {fluent_score}/100. "
-        f"{func_reason} {fluent_reason}"
-    )
     return build_final_judge_evaluation(
         effective_spec_id=effective_spec_id,
         compliance_score=compliance_score,
