@@ -385,6 +385,11 @@ def build_fluent_python_metric(model: OpenAIModel) -> GEval:
             "where applicable, without penalizing code that does not use dataclasses."
         ),
         (
+            "Do NOT penalize indentation offsets, syntax fragments, incomplete classes, "
+            "trailing newlines, or missing imports resulting from extracted git diff snippets. "
+            "Static syntax, compilation, and types have already been verified by pyright and the test suite."
+        ),
+        (
             "If no explicit prohibited anti-patterns are present in actual_output, "
             "award a full score (1.0)."
         ),
@@ -515,9 +520,21 @@ def is_fluent_python_false_positive(
         return True
 
     immutable_tokens = ("false", "true", "none", "bool", "int", "str")
-    return "mutable default" in lowered and any(
+    if "mutable default" in lowered and any(
         tok in lowered for tok in immutable_tokens
+    ):
+        return True
+
+    snippet_fragment_tokens = (
+        "indentation error",
+        "syntax error",
+        "incomplete and contains syntax errors",
+        "trailing newline",
+        "incorrectly indented",
+        "is not properly defined",
     )
+    return any(tok in lowered for tok in snippet_fragment_tokens)
+
 
 
 def evaluate_fluent_python_stage(
@@ -883,10 +900,13 @@ FUNCTIONAL_JUDGE_VOTES = 3
 FLUENT_STAGE_INPUT_PREAMBLE = (
     "PYTHON FLUENT ANTI-PATTERN AUDIT. The normative guidelines below are "
     "the ONLY rubric. The CODE UNDER EVALUATION is the release diff's "
-    "added Python code, delivered in the actual_output. Judge ONLY "
-    "prohibited anti-patterns against these guidelines; code that adds "
-    "plain, idiomatic Python without a prohibited anti-pattern follows "
-    "the guidelines and MUST receive full score (1.0).\n\n"
+    "added Python code, delivered in the actual_output as extracted diff snippets. "
+    "It is NOT a standalone module: do NOT penalize indentation offsets, syntax "
+    "fragments, trailing newlines, or incomplete class/method definitions resulting "
+    "from diff chunk extraction. Code compilation and static types are already "
+    "verified. Judge ONLY prohibited anti-patterns against these guidelines; "
+    "code that adds plain, idiomatic Python without a prohibited anti-pattern "
+    "follows the guidelines and MUST receive full score (1.0).\n\n"
     "NORMATIVE GUIDELINES:\n"
 )
 

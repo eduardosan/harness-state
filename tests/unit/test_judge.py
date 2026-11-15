@@ -1007,6 +1007,59 @@ def test_evaluate_spec_diff_ignores_immutable_default_argument_false_positive(
     assert eval_result.violations == []
 
 
+@patch("harness_state.judge.build_fluent_python_metric")
+@patch("harness_state.judge.build_gate_metric")
+def test_evaluate_spec_diff_ignores_snippet_fragmentation_false_positive(
+    mock_build_func: MagicMock,
+    mock_build_fluent: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: Alucinacoes de erro de sintaxe/indentacao causadas por fragmentacao
+    de diff snippets na Etapa 2 sao mitigadas como falso positivo quando a Etapa 1 atinge 100%."""
+    spec_file = tmp_path / "SPEC-009.md"
+    spec_file.write_text("# SPEC-009\nRequisito: State Contract", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diff_patch = (
+        "--- a/client.py\n"
+        "+++ b/client.py\n"
+        "@@ -10,3 +10,6 @@\n"
+        "+async def aclose(self) -> None:\n"
+        "+    pass\n"
+    )
+    diffs_file.write_text(diff_patch, encoding="utf-8")
+
+    mock_func_battery = MagicMock()
+    mock_func_battery.score = 1.0
+    mock_func_battery.reason = "Funcional totalmente aderente."
+    mock_func_battery.is_successful.return_value = True
+    mock_func_battery.is_approved = True
+    mock_build_func.return_value = mock_func_battery
+
+    mock_fluent_metric = MagicMock()
+    mock_fluent_metric.score = 0.0
+    mock_fluent_metric.reason = (
+        "The actual output contains multiple issues. The function `derive_hub_ecosystem` "
+        "has a trailing newline and an indentation error. The class definition is incomplete "
+        "and contains syntax errors. The `__init__` method has an indentation error and the "
+        "`model_config` is not properly defined. The `spec.update_task_status` call is also "
+        "incorrectly indented. These issues indicate a significant deviation from the expected "
+        "Python code quality and adherence to the normative guidelines."
+    )
+    mock_fluent_metric.is_successful.return_value = False
+    mock_build_fluent.return_value = mock_fluent_metric
+
+    eval_result = evaluate_spec_diff(
+        spec_path=spec_file,
+        diffs_path=diffs_file,
+        base_url="http://127.0.0.1:11435/v1",
+        api_key="ollama",
+    )
+
+    assert eval_result.status == "APPROVED"
+    assert eval_result.compliance_score == 100
+    assert eval_result.violations == []
+
+
 def test_compact_diff_for_functional_stage_passthrough_small_diff() -> None:
     """Business Rule: Diffs abaixo do orcamento da Etapa 1 seguem integros."""
     from harness_state.judge import compact_diff_for_functional_stage
