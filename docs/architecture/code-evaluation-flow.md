@@ -221,10 +221,14 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
   proíbe penalizar ausência de demonstração.
 - **Peso:** 100% da pontuação do juiz.
 
-#### Governança de Código Idiomático (Python Fluente) via Harness e Sensores
+#### Governança de Código Idiomático (Python Fluente) via Harness e Modos CLI
+
 - **Instruções de Harness para Agentes:** As especificações e regras de código idiomático (Python Fluente) são integradas diretamente como prompts e convenções nos harnesses e módulos. Os agentes geradores de código são instruídos antecipadamente a produzir classes imutáveis, métodos especiais do Data Model e ausência de anti-padrões.
 - **Sensores Estáticos Locais e no CI:** A conformidade com as regras de Python Fluente (`PYF001-PYF007`) é auditada de forma determinística e imediata pelos sensores AST (`ast_sensor.py`), executados junto com os testes unitários (`test.yml`).
-- **Isenção do Judge LLM:** O módulo `judge.py` não executa etapa de avaliação de estilo ou sintaxe por LLM sobre diffs, eliminando falsos positivos decorrentes de fragmentos de código e mantendo seu foco estritamente na conformidade funcional e de contratos.
+- **Comando CLI Dedicado (`harness-judge`):** Para manter o Gate Funcional isolado de falsos positivos de sintaxe decorrentes de fragmentos de diffs sem contexto de módulo, o comando CLI `harness-judge` disponibiliza modos especializados:
+  1. `harness-judge --spec <spec.md> --diffs <diffs.patch>`: Avaliação focada exclusivamente na conformidade funcional e de contratos em relação à especificação (Gate Funcional 100%).
+  2. `harness-judge --language python --diffs <diffs.patch>`: Avaliação focada exclusivamente na conformidade com as diretrizes normativas da linguagem (Python Fluente) via LLM.
+  3. `harness-judge --spec <spec.md> --language python --diffs <diffs.patch>`: Modo combinado que executa ambos os avaliadores de forma desacoplada e consolida o veredito seguro.
 
 #### Consolidação e Regras de Aprovação
 $$\text{Score do Judge} = \text{Score}_{\text{Funcional}} \quad (100\%)$$
