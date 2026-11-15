@@ -1,7 +1,7 @@
 # Fluxo Canônico de Avaliação de Código: Staged Code Evaluation & Cross-Repo Gate
 
 > **Documento Oficial de Arquitetura e Engenharia de Avaliação de Código.**  
-> Este documento formaliza o pipeline canônico de avaliação de código da plataforma SDD federada (**harness-state** como núcleo autovalidador), detalhando o desacoplamento em camadas determinísticas e cognitivas, o papel do **Roteador Estático de Especificações**, a **avaliação em etapas especializadas (Staged LLM-as-a-Judge)** e a mitigação de sobrecarga de contexto para modelos locais (como o `agentic-qwen:7b`).
+> Este documento formaliza o pipeline canônico de avaliação de código da plataforma SDD federada (**harness-state** como núcleo autovalidador), detalhando o desacoplamento em camadas determinísticas e cognitivas, o papel do **Roteador Estático de Especificações**, a **avaliação focada no Gate Funcional (LLM-as-a-Judge)** e a governança de código fluente via instruções de harness e sensores AST determinísticos.
 
 ---
 
@@ -14,7 +14,7 @@
 > com a tag candidata ainda inexistente, que executa em ordem
 > obrigatória **1)** `fluent-python-eval` — o harness de Python Fluente
 > dependente de LLM (DeepEval, `tests/evals/test_fluent_python_phase1-4.py`)
-> valida as specs SPEC-PY que servem de régua ao juiz; **2)**
+> valida as specs SPEC-PY que servem de régua ao ecossistema; **2)**
 > `prompts-eval` — DeepEval das diretrizes `specs/prompts/`; **3)** o
 > `judge.py` emite o veredito sobre `git diff LATEST_TAG..HEAD`
 > (conteúdo idêntico ao que seria taggeado; APPROVED >= 90). Só então o
@@ -25,20 +25,20 @@
 > camadas determinísticas: sensores AST PYF, ruff, isort, pyright,
 > pytest). Alterações de topologia/ordem da esteira de release exigem
 > emenda simultânea a esta seção — o juiz mede o diff contra ela; diffs
-> puramente documentais/mde manutenção são acolhidos pela regra de
+> puramente documentais/de manutenção são acolhidos pela regra de
 > isenção (skip não-código / manutenção).
 
 
 A avaliação de código gerado por agentes de IA ou engenheiros de software em um ecossistema federado distribuído impõe desafios fundamentais de precisão, custo computacional e latência:
 
 1. **Heterogeneidade de Objetivos Cognitivos:** Uma alteração de código precisa ser avaliada simultaneamente quanto a:
-   - **Conformidade Funcional:** Os endpoints, regras de negócio e modelos de dados solicitados na especificação foram entregues?
+   - **Conformidade Funcional e Contratos:** Os endpoints, regras de negócio e modelos de dados solicitados na especificação foram entregues sem regressão ou quebra de contratos públicos?
    - **Integridade de Testes:** Os testes unitários comprovam as regras de negócio com docstrings padronizadas (`Business Rule:`)?
-   - **Conformidade Idiomática e Qualidade:** O código segue os padrões canônicos da linguagem (ex: *Python Fluente*), evitando anti-padrões e dívidas técnicas?
-2. **Gargalo de Contexto e Atenção em Modelos Locais (7B Parameters):** Modelos de código locais hospedados em Ollama (como `agentic-qwen:7b`) sofrem de **degradação severa de atenção ("Lost in the Middle")** quando submetidos a prompts monolíticos gigantescos contendo diffs multi-repositório agregados somados a dezenas de páginas de especificações. O resultado são notas imprecisas, alucinações e aprovações superficiais.
-3. **Princípio do Fail-Fast Determinístico:** Regras que podem ser validadas por análise léxica ou de AST em frações de segundo nunca devem consumir tokens de modelos de linguagem.
+   - **Conformidade Idiomática via Instruções de Harness:** Padrões pythônicos e normas idiomáticas são ensinados aos agentes via instruções de harness (skills, prompts de sistema, `AGENTS.md`) e validados de ponta a ponta por sensores determinísticos AST (`PYF001-PYF007`), linters e testes, sem submeter fragmentos desconexos de diff a alucinações de modelos LLM.
+2. **Gargalo de Contexto e Atenção em Modelos Locais (7B Parameters):** Modelos de código locais hospedados em Ollama (como `agentic-qwen:7b`) sofrem de **degradação severa de atenção ("Lost in the Middle")** quando submetidos a prompts monolíticos gigantescos contendo diffs multi-repositório agregados somados a dezenas de páginas de especificações. O resultado são notas imprecisas, alucinações de indentação/sintaxe e falsos positivos.
+3. **Princípio do Fail-Fast Determinístico:** Regras que podem ser validadas por análise léxica ou de AST em frações de segundo nunca devem consumir tokens de modelos de linguagem nem travar entregas por falsos positivos de estilo em diffs.
 
-A solução adotada pelo ecossistema é o **Pipeline de Avaliação em Três Camadas com Julgamento em Etapas Especializadas (Staged Evaluation)**.
+A solução adotada pelo ecossistema é o **Pipeline de Avaliação Desacoplado: Julgamento Funcional pelo Judge e Padrões Idiomáticos por Instruções de Harness e Sensores AST**.
 
 ---
 
@@ -51,7 +51,7 @@ O diagrama abaixo ilustra o ciclo de vida completo de uma alteração de código
 ```mermaid
 flowchart TD
     subgraph SpokeLocal ["1. Repositório Spoke (Execução Local-First)"]
-        Dev["Agente / Desenvolvedor"] --> Edits["Edições no Código-Fonte"]
+        Dev["Agente / Desenvolvedor (Instruções de Harness)"] --> Edits["Edições no Código-Fonte"]
         Edits --> JustLint["just lint (ast_sensor.py + ruff + isort)"]
         JustLint -->|Falha| FeedbackLocal["Feedback Prescritivo (.harness/sensors)"]
         FeedbackLocal --> Dev
@@ -66,29 +66,21 @@ flowchart TD
     end
 
     subgraph StagedJudge ["3. Cross-Repo Harness Gate (judge.py via DeepEval)"]
-        FetchSpec & CollectDiffs --> Stage1["Etapa 1: Juiz de Conformidade Funcional (70%)"]
-        CollectDiffs --> SpecRouter["spec_router.py (Roteamento Léxico)"]
-        SpecRouter --> CheckPython{"Detectou Padrões Python Fluente?"}
-        
-        CheckPython -->|Sim| ExtractRules["Coleta de Regras Normativas (SPEC-PY-XX)"]
-        ExtractRules --> Stage2["Etapa 2: Juiz de Python Fluente (30%)"]
-        CheckPython -->|Não| SkipStage2["Bypass da Etapa 2 (Score Funcional = 100%)"]
-        
-        Stage1 & Stage2 --> Aggregator["Agregador de Score Ponderado"]
-        SkipStage2 --> Aggregator
+        FetchSpec & CollectDiffs --> Stage1["Gate Funcional: FunctionalRuleBattery (100%)"]
+        Stage1 --> ScoreCalc["Score do Judge = 100% Funcional"]
     end
 
     subgraph VerdictOutcome ["4. Resultado & Veredito"]
-        Aggregator --> CheckScore{"Score >= 90% e sem violações críticas?"}
+        ScoreCalc --> CheckScore{"Score >= 90% e sem violações críticas?"}
         CheckScore -->|Sim| Approved["APPROVED (status: 0, PR liberado para Merge)"]
         CheckScore -->|Não| Rejected["REJECTED (status: 1, feedback categorizado)"]
-        Rejected --> SyncFeedback["Notificação no PR com tags [Funcional] / [Python Fluente]"]
+        Rejected --> SyncFeedback["Notificação no PR com tag [Funcional]"]
     end
 ```
 
 ---
 
-### 2.2. Arquitetura Interna do Avaliador em Etapas (`judge.py`)
+### 2.2. Arquitetura Interna do Avaliador de Gate (`judge.py`)
 
 O desacoplamento de prompts garante que o modelo LLM receba apenas o subconjunto de informações estritamente relevante para a métrica que está avaliando:
 
@@ -99,29 +91,18 @@ flowchart LR
         DiffPatch["diffs.patch (Patch Git Unificado)"]
     end
 
-    subgraph Stage1Pipeline ["Etapa 1: Juiz Funcional (Bateria de Regras Negativas)"]
-        SpecDoc --> Prompt1In["Input: Especificação Funcional"]
-        DiffPatch --> Prompt1Out["Actual Output: Diff Completo do Repositório"]
+    subgraph Stage1Pipeline ["Gate Funcional: Bateria de Regras Negativas"]
+        DiffPatch --> Compactor["compact_diff_for_functional_stage()"]
+        Compactor --> CompactDiff["Diff Compactado com Prioridade"]
+        Prompt1In["Input: FUNCTIONAL_STAGE_INPUT_PREAMBLE"]
+        CompactDiff --> Prompt1Out["Actual Output: Diff Compactado"]
         Prompt1In & Prompt1Out --> GEvalFunc["FunctionalRuleBattery: 1 GEval por diretriz negativa"]
-        GEvalFunc --> FuncScore["Func Score = proporcao de regras aprovadas x 100 + violacoes nominais"]
-    end
-
-    subgraph Stage2Pipeline ["Etapa 2: Juiz Idiomático (GEval 2)"]
-        DiffPatch --> Extractor["extract_added_lines()"]
-        Extractor --> AddedOnly["Linhas Adicionadas (Sem cabeçalhos git)"]
-        DiffPatch --> Router["route_diff()"]
-        Router --> ActivatedSpecs["Specs Ativadas (PY-01 a PY-13)"]
-        ActivatedSpecs --> NormRules["extract_normative_rules()"]
-        NormRules --> Prompt2In["Input: Regras Normativas Canônicas"]
-        AddedOnly --> Prompt2Out["Actual Output: Código Adicionado"]
-        Prompt2In & Prompt2Out --> GEvalFluent["GEval: Fluent Python Idiomatic Compliance"]
-        GEvalFluent --> FluentScore["Fluent Score (0 a 100) + Violações Idiomáticas"]
+        GEvalFunc --> FuncScore["Func Score = proporcao de regras aprovadas x 100"]
     end
 
     subgraph Consolidation ["Consolidação de Veredito"]
-        FuncScore --> WeightedCalc["Score Final = 0.7 * Func + 0.3 * Fluent"]
-        FluentScore --> WeightedCalc
-        WeightedCalc --> EvaluationResult["JudgeEvaluation (JSON + GitHub Output)"]
+        FuncScore --> FinalCalc["Score Final = Func Score (100%)"]
+        FinalCalc --> EvaluationResult["JudgeEvaluation (JSON + GitHub Output)"]
     end
 ```
 
@@ -136,8 +117,7 @@ sequenceDiagram
     participant LocalSensors as AST Sensor & Linters
     participant Actions as GitHub Actions / Runner
     participant Judge as Judge Orchestrator (judge.py)
-    participant Router as Spec Router (spec_router.py)
-    participant Judge as DeepEval Judge (opencode/glm-5.3-flash-free / fallback agentic-qwen:7b)
+    participant Ollama as DeepEval Judge (agentic-qwen / opencode/glm-5.3-flash-free)
 
     Dev->>LocalSensors: Executa 'just verify'
     LocalSensors-->>Dev: Falha imediata se PYF001-PYF007 violado (Fail-Fast)
@@ -145,27 +125,13 @@ sequenceDiagram
     Actions->>Judge: Dispara 'harness gate --spec ... --diffs ...'
     
     rect rgb(240, 248, 255)
-    Note over Judge,Ollama: Etapa 1: Julgamento de Conformidade Funcional
-    Judge->>Ollama: Bateria de 3 GEval de diretriz unica (Spec vs Diff), maioria de 3 por regra
-    Ollama-->>Judge: Func Score: 100/100, Reason: "Nenhuma violacao detectada pelas regras negativas"
+    Note over Judge,Ollama: Julgamento de Conformidade Funcional e Contratos
+    Judge->>Ollama: Bateria de 3 GEval de diretriz única (Gate Rules), maioria de 3 votos
+    Ollama-->>Judge: Func Score: 100/100, Reason: "Nenhuma violação detectada pelas regras negativas"
     end
 
-    rect rgb(255, 250, 240)
-    Note over Judge,Router: Análise Estática de Ativação Python Fluente
-    Judge->>Router: route_diff(diffs_content)
-    Router-->>Judge: Specs ativadas: [PY-01, PY-05]
-    Judge->>Router: collect_fluent_python_guidelines(diffs_content)
-    Router-->>Judge: Bloco normativo de SPEC-PY-01 e SPEC-PY-05
-    end
-
-    rect rgb(245, 255, 245)
-    Note over Judge,Ollama: Etapa 2: Julgamento de Python Fluente
-    Judge->>Ollama: GEval Fluente (Regras Normativas vs Linhas Adicionadas)
-    Ollama-->>Judge: Fluent Score: 92/100, Reason: "Uso correto de slots e dunders"
-    end
-
-    Judge->>Judge: Calcula Score Consolidado: (0.7 * 95) + (0.3 * 92) = 94.1 -> 94
-    Judge->>Actions: Registra GITHUB_OUTPUT (status=APPROVED, compliance_score=94)
+    Judge->>Judge: Consolida Score: 100/100 (APPROVED)
+    Judge->>Actions: Registra GITHUB_OUTPUT (status=APPROVED, compliance_score=100)
     Actions-->>Dev: PR Aprovado no Cross-Repo Gate
 ```
 
@@ -253,36 +219,25 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
   **negativo de diretriz única** — o mesmo do RCA, estável em todas as corridas das
   suítes (`tests/evals/`) — pergunta apenas se HÁ violação detectável, e a fábrica
   proíbe penalizar ausência de demonstração.
-- **Peso:** 70% da pontuação total.
+- **Peso:** 100% da pontuação do juiz.
 
-#### Etapa 2: Avaliação de Conformidade Idiomática (Python Fluente)
-- **Métrica:** `build_fluent_python_metric` (`GEval`).
-- **Condição de Execução:** Disparada exclusivamente quando `collect_fluent_python_guidelines` detecta padrões ativados em arquivos Python.
-- **Input:** Framing fixo `FLUENT_STAGE_INPUT_PREAMBLE` (declara que a rubrica
-  são as diretrizes e que o código avaliado está no `actual_output`) +
-  regras normativas concisas das specs de Python Fluente acionadas.
-- **Actual Output:** Apenas o código adicionado (`extract_added_lines`).
-  O diff Python integral truncado (release v0.8.0, run 43640363281) entregava
-  cabeçalhos/`@@` de diff nas primeiras 4.000 chars de um diff de 91k e o juiz
-  reprovou com "template or placeholder without any actual content" — código
-  adicionado puro é o material do contrato (com fallback ao diff integral
-  apenas quando não há linhas adicionadas extraíveis).
-- **Critérios Avaliados:**
-  1. Utilização dos métodos especiais do Python Data Model sobre métodos convencionais arbitrários.
-  2. Adesão aos contratos de imutabilidade, `@dataclass(slots=True)` e boas práticas de tipagem.
-  3. Ausência de anti-padrões e violações explícitas de convenções idiomáticas.
-- **Peso:** 30% da pontuação total.
+#### Governança de Código Idiomático (Python Fluente) via Harness e Modos CLI
+
+- **Instruções de Harness para Agentes:** As especificações e regras de código idiomático (Python Fluente) são integradas diretamente como prompts e convenções nos harnesses e módulos. Os agentes geradores de código são instruídos antecipadamente a produzir classes imutáveis, métodos especiais do Data Model e ausência de anti-padrões.
+- **Sensores Estáticos Locais e no CI:** A conformidade com as regras de Python Fluente (`PYF001-PYF007`) é auditada de forma determinística e imediata pelos sensores AST (`ast_sensor.py`), executados junto com os testes unitários (`test.yml`).
+- **Comando CLI Dedicado (`harness-judge`):** Para manter o Gate Funcional isolado de falsos positivos de sintaxe decorrentes de fragmentos de diffs sem contexto de módulo, o comando CLI `harness-judge` disponibiliza modos especializados:
+  1. `harness-judge --spec <spec.md> --diffs <diffs.patch>`: Avaliação focada exclusivamente na conformidade funcional e de contratos em relação à especificação (Gate Funcional 100%).
+  2. `harness-judge --language python --diffs <diffs.patch>`: Avaliação focada exclusivamente na conformidade com as diretrizes normativas da linguagem (Python Fluente) via LLM.
+  3. `harness-judge --spec <spec.md> --language python --diffs <diffs.patch>`: Modo combinado que executa ambos os avaliadores de forma desacoplada e consolida o veredito seguro.
 
 #### Consolidação e Regras de Aprovação
-$$\text{Score Consolidado} = 0.7 \times \text{Score}_{\text{Funcional}} + 0.3 \times \text{Score}_{\text{Fluente}}$$
+$$\text{Score do Judge} = \text{Score}_{\text{Funcional}} \quad (100\%)$$
 
 - O PR só é marcado como **`APPROVED`** se:
-  1. A avaliação funcional for aprovada (`is_successful=True` e `Score >= 90`).
-  2. A avaliação de Python Fluente (quando aplicável) for aprovada (`is_successful=True` e `Score >= 90`).
-  3. O score consolidado ponderado for $\ge 90/100$.
-- Caso qualquer etapa reprove, o relatório em JSON e a saída do terminal destacam as falhas com prefixos semânticos explícitos:
-  - `[Funcional] O endpoint POST /pedidos não trata o payload com validação de estoque.`
-  - `[Python Fluente] A classe Pedido viola a SPEC-PY-01 ao não implementar __repr__ canônico.`
+  1. A avaliação funcional da especificação for aprovada (`is_successful=True` e `Score >= 90`).
+  2. Todos os testes unitários e sensores estáticos determinísticos passarem no CI.
+- Caso o Gate funcional reprove, o relatório em JSON e a saída do terminal destacam as falhas com o prefixo:
+  - `[Funcional] O endpoint POST /pedidos quebra a assinatura pública do contrato.`
 
 ---
 

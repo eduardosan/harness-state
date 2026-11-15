@@ -1,10 +1,13 @@
 """Avaliador LLM-as-a-Judge canônico do harness (self-validation) via DeepEval.
 
 Portado do agentic-flywheel: avalia diffs de release/contribuição contra a
-especificação arquitetural `docs/architecture/code-evaluation-flow.md` em
-etapas especializadas, com tiers de modelo (primário/fallback) resolvidos por
-variáveis de ambiente canônicas do ecossistema (LLM_JUDGE_MODEL,
-LLM_DEFAULT_MODEL, LLM_INTERNAL_BASE_URL, LLM_EXTERNAL_BASE_URL).
+especificação arquitetural e integridade de contratos no Gate Funcional,
+com tiers de modelo (primário/fallback) resolvidos por variáveis de ambiente
+canônicas do ecossistema (LLM_JUDGE_MODEL, LLM_DEFAULT_MODEL,
+LLM_INTERNAL_BASE_URL, LLM_EXTERNAL_BASE_URL). Padrões idiomáticos de código
+(ex: Python Fluente) são providos como instruções de harness aos agentes
+e auditados deterministicamente por sensores AST e linters no CI, mantendo o
+juiz focado exclusivamente na integridade funcional e de contratos.
 """
 
 import argparse
@@ -524,26 +527,21 @@ def evaluate_fluent_python_stage(
     judge_model: Any,
     fluent_guidelines: str,
     python_diff: str,
-    func_score: int,
-    func_success: bool,
+    func_score: int = 100,
+    func_success: bool = True,
 ) -> tuple[int, bool, str]:
-    """Executa a Etapa 2 de avaliação focada em Python Fluente.
+    """Executa a etapa de avaliação focada em Python Fluente via LLM.
 
     Args:
         judge_model: Instância do modelo juiz DeepEval.
         fluent_guidelines: Diretrizes normativas coletadas.
         python_diff: Diff filtrado para código Python.
-        func_score: Score funcional da Etapa 1.
-        func_success: Sucesso funcional da Etapa 1.
+        func_score: Score funcional opcional de referência.
+        func_success: Sucesso funcional opcional de referência.
 
     Returns:
         Tupla `(fluent_score, fluent_success, fluent_reason)`.
     """
-    # Contrato da doc-réua ("Actual Output: apenas o código adicionado"):
-    # material = linhas ADICIONADAS do diff Python. O diff integral
-    # truncado (evidência do release v0.8.0, run 43640363281) entregava
-    # cabeçalhos/hunks na frente de 4.000 chars e o juiz 7B leu
-    # "template or placeholder without any actual content" → 0/100.
     python_added = extract_added_lines(python_diff, file_suffix=".py")
     code_material = python_added if python_added.strip() else python_diff
     compact_code = code_material[:4000]
@@ -1097,9 +1095,14 @@ def run_judge_metrics_pipeline(
     diffs_content: str,
     judge_model: Any,
     functional_metric: Any,
-    fluent_guidelines: str,
+    fluent_guidelines: str = "",
 ) -> JudgeEvaluation:
-    """Executa a Etapa 1 (Funcional) e Etapa 2 (Python Fluente) e consolida o veredito.
+    """Executa a avaliação funcional do Gate e consolida o veredito.
+
+    O Gate 5 avalia exclusivamente a conformidade funcional do diff contra
+    as regras normativas do gate e especificação. Diretrizes de Python Fluente
+    são instruídas aos agentes de código via harness skills e auditadas
+    deterministicamente via sensores AST e linters, sem intermediação de LLM.
 
     Args:
         effective_spec_id: Identificador da especificação avaliada.
@@ -1107,10 +1110,10 @@ def run_judge_metrics_pipeline(
         diffs_content: Conteúdo integral dos diffs.
         judge_model: Instância do modelo juiz DeepEval.
         functional_metric: Métrica GEval funcional.
-        fluent_guidelines: Diretrizes de Python Fluente aplicáveis.
+        fluent_guidelines: Diretrizes normativas legadas mantidas por compatibilidade.
 
     Returns:
-        Instância de `JudgeEvaluation` populada.
+        Instância de `JudgeEvaluation` populada com o veredito funcional.
     """
     compacted_diff = compact_diff_for_functional_stage(
         diffs_content, spec_content=spec_content
@@ -1135,7 +1138,7 @@ def run_judge_metrics_pipeline(
 
     if len(func_votes) > 1:
         print(
-            f"[Judge Etapa 1] {len(func_votes)} votos -> score {func_score}/100 "
+            f"[Judge Gate Funcional] {len(func_votes)} votos -> score {func_score}/100 "
             f"(func_votes={[(v[0], v[1]) for v in func_votes]})",
             file=sys.stderr,
         )
@@ -1157,36 +1160,10 @@ def run_judge_metrics_pipeline(
             "Ajustar codigo nos repositorios para cobrir requisitos funcionais."
         )
 
-    python_diff = extract_python_diff_for_fluent_check(diffs_content)
-    if not (fluent_guidelines and python_diff.strip()):
-        return build_final_judge_evaluation(
-            effective_spec_id=effective_spec_id,
-            compliance_score=func_score,
-            is_approved=bool(func_success and func_score >= 90),
-            summary=func_reason,
-            violations=violations,
-            recommendations=recommendations,
-        )
+    compliance_score = func_score
+    is_approved = bool(func_success and func_score >= 90)
+    summary = func_reason
 
-    fluent_score, fluent_success, fluent_reason = evaluate_fluent_python_stage(
-        judge_model=judge_model,
-        fluent_guidelines=fluent_guidelines,
-        python_diff=python_diff,
-        func_score=func_score,
-        func_success=func_success,
-    )
-    if not fluent_success or fluent_score < 90:
-        violations.append(f"[Python Fluente] {fluent_reason}")
-        recommendations.append(
-            "Refatorar anti-padroes de Python conforme as specs ativadas."
-        )
-
-    compliance_score = round(0.7 * func_score + 0.3 * fluent_score)
-    is_approved = bool(func_success and fluent_success and compliance_score >= 90)
-    summary = (
-        f"Funcional: {func_score}/100 | Python Fluente: {fluent_score}/100. "
-        f"{func_reason} {fluent_reason}"
-    )
     return build_final_judge_evaluation(
         effective_spec_id=effective_spec_id,
         compliance_score=compliance_score,
@@ -1354,6 +1331,146 @@ def evaluate_spec_diff(
     return build_judge_error_evaluation(effective_spec_id, fallback_name, last_error)
 
 
+def evaluate_language_diff(
+    diffs_path: Path,
+    language: str = "python",
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "",
+    spec_id: str | None = None,
+    fallback_model: str = "",
+) -> JudgeEvaluation:
+    """Avalia o diff de código gerado contra o harness da linguagem via LLM.
+
+    Args:
+        diffs_path: Caminho para o arquivo unificado de diffs.
+        language: Nome da linguagem a avaliar (padrão: "python").
+        base_url: Endereço base da API LLM.
+        api_key: Chave de autorização da API.
+        model: Identificador do modelo primário a ser invocado.
+        spec_id: Identificador opcional da avaliação.
+        fallback_model: Identificador do modelo de fallback opcional.
+
+    Returns:
+        Resultado estruturado do julgamento da linguagem em `JudgeEvaluation`.
+    """
+    effective_id = spec_id if spec_id else f"LANG-{language.upper()}"
+
+    if not diffs_path.is_file():
+        return JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=0,
+            status="REJECTED",
+            summary=f"Arquivo de diffs nao encontrado: {diffs_path}",
+            violations=["Arquivo de diffs consolidado inexistente."],
+            recommendations=["Verificar coleta de PRs e diffs dos repositórios."],
+        )
+
+    diffs_content = diffs_path.read_text(encoding="utf-8")
+    if not diffs_content.strip():
+        return JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=100,
+            status="APPROVED",
+            summary="Diff vazio: sem alterações na linguagem para avaliar.",
+            violations=[],
+            recommendations=[],
+        )
+
+    if language.lower() == "python":
+        python_diff = extract_python_diff_for_fluent_check(diffs_content)
+        if not python_diff.strip():
+            return JudgeEvaluation(
+                spec_id=effective_id,
+                compliance_score=100,
+                status="APPROVED",
+                summary="Sem arquivos Python modificados no diff para avaliar.",
+                violations=[],
+                recommendations=[],
+            )
+
+        fluent_guidelines = collect_fluent_python_guidelines(diffs_content)
+        if not fluent_guidelines.strip():
+            return JudgeEvaluation(
+                spec_id=effective_id,
+                compliance_score=100,
+                status="APPROVED",
+                summary="Nenhuma diretriz de Python Fluente ativada para o diff.",
+                violations=[],
+                recommendations=[],
+            )
+
+        judge_model = build_judge_model(
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model,
+        )
+        primary_name = resolve_primary_judge_model(model)
+        fallback_name = fallback_model or resolve_fallback_judge_model()
+        stages: list[tuple[str, Any]] = [(primary_name, judge_model)]
+        if fallback_name != primary_name:
+            stages.append(
+                (
+                    fallback_name,
+                    build_judge_model(
+                        base_url=base_url,
+                        api_key=api_key,
+                        model_name=fallback_name,
+                    ),
+                )
+            )
+
+        last_error: Exception | None = None
+        for stage_index, (stage_name, stage_model) in enumerate(stages):
+            try:
+                fluent_score, fluent_success, fluent_reason = evaluate_fluent_python_stage(
+                    judge_model=stage_model,
+                    fluent_guidelines=fluent_guidelines,
+                    python_diff=python_diff,
+                )
+                is_approved = bool(fluent_success and fluent_score >= 90)
+                status = "APPROVED" if is_approved else "REJECTED"
+                violations = (
+                    []
+                    if is_approved
+                    else [f"[Python Fluente] {fluent_reason}"]
+                )
+                recommendations = (
+                    ["Implementacao atende integralmente as diretrizes da linguagem."]
+                    if is_approved
+                    else ["Refatorar anti-padroes de Python conforme as specs ativadas."]
+                )
+                return JudgeEvaluation(
+                    spec_id=effective_id,
+                    compliance_score=fluent_score,
+                    status=status,
+                    summary=fluent_reason,
+                    violations=violations,
+                    recommendations=recommendations,
+                )
+            except Exception as stage_error:
+                LOGGER.warning("Estagio do juiz de linguagem falhou; tentando proximo tier")
+                LOGGER.debug("Detalhe da falha de linguagem", exc_info=True)
+                last_error = stage_error
+                if stage_index < len(stages) - 1:
+                    print(
+                        f"[Language Judge Fallback] Recursos esgotados no tier padrao "
+                        f"({primary_name}): {stage_error}. "
+                        f"Reavaliando com {fallback_name}...",
+                        file=sys.stderr,
+                    )
+
+        if last_error is None:
+            last_error = RuntimeError(
+                f"Avaliação da linguagem esgotou os tiers ({primary_name} → {fallback_name}) "
+                "sem erro capturado."
+            )
+        report_judge_failure(effective_id, last_error)
+        return build_judge_error_evaluation(effective_id, fallback_name, last_error)
+
+    raise ValueError(f"Linguagem não suportada para avaliação: {language}")
+
+
 def report_judge_failure(spec_id: str, error: Exception) -> None:
     """Loga a falha do juiz com o traceback completo no stderr.
 
@@ -1390,6 +1507,44 @@ def build_judge_error_evaluation(
     )
 
 
+def consolidate_evaluations(
+    spec_eval: JudgeEvaluation,
+    lang_eval: JudgeEvaluation,
+    spec_id: str | None = None,
+) -> JudgeEvaluation:
+    """Consolida os vereditos das etapas funcional (spec) e idiomática (language).
+
+    Args:
+        spec_eval: Resultado da avaliação da especificação funcional.
+        lang_eval: Resultado da avaliação idiomática da linguagem.
+        spec_id: Identificador opcional para o veredito unificado.
+
+    Returns:
+        Instância de JudgeEvaluation unificada com o status e violações agregados.
+    """
+    effective_id = spec_id if spec_id else f"{spec_eval.spec_id}+{lang_eval.spec_id}"
+    is_approved = spec_eval.status == "APPROVED" and lang_eval.status == "APPROVED"
+    score_spec = (
+        spec_eval.compliance_score if spec_eval.compliance_score is not None else 100
+    )
+    score_lang = (
+        lang_eval.compliance_score if lang_eval.compliance_score is not None else 100
+    )
+    score = min(score_spec, score_lang)
+    summary = f"Spec: {spec_eval.summary} | Language: {lang_eval.summary}"
+    violations = list(spec_eval.violations) + list(lang_eval.violations)
+    recommendations = list(spec_eval.recommendations) + list(lang_eval.recommendations)
+
+    return JudgeEvaluation(
+        spec_id=effective_id,
+        compliance_score=score,
+        status="APPROVED" if is_approved else "REJECTED",
+        summary=summary,
+        violations=violations,
+        recommendations=recommendations,
+    )
+
+
 def write_github_output(output_path: Path | None, key: str, value: str) -> None:
     """Grava variaveis no arquivo GITHUB_OUTPUT do runner.
 
@@ -1419,9 +1574,17 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--spec",
-        required=True,
+        required=False,
+        default=None,
         type=Path,
         help="Arquivo da especificacao markdown original",
+    )
+    parser.add_argument(
+        "--language",
+        required=False,
+        default=None,
+        type=str,
+        help="Linguagem do harness para avaliar conformidade idiomática via LLM (ex: python)",
     )
     parser.add_argument(
         "--diffs",
@@ -1482,25 +1645,68 @@ def parse_args(args: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Ponto de entrada do executavel de julgamento de especificacoes.
+    """Ponto de entrada do executavel de julgamento de especificacoes e linguagens.
 
     Args:
         argv: Argumentos explicitos ou None para sys.argv[1:].
 
     Returns:
-        0 se aprovado, 1 se rejeitado ou com erro.
+        0 se aprovado, 1 se rejeitado, 2 se argumentos invalidos.
     """
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
-    evaluation = evaluate_spec_diff(
-        spec_path=args.spec,
-        diffs_path=args.diffs,
-        base_url=args.base_url,
-        api_key=args.api_key,
-        model=args.model,
-        spec_id=args.spec_id,
-        fallback_model=args.fallback_model,
-    )
+    if not args.spec and not args.language:
+        sys.stderr.write(
+            "Erro: É necessário especificar ao menos --spec ou --language.\n"
+        )
+        return 2
+
+    if args.spec and not args.language:
+        evaluation = evaluate_spec_diff(
+            spec_path=args.spec,
+            diffs_path=args.diffs,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+    elif args.language and not args.spec:
+        evaluation = evaluate_language_diff(
+            diffs_path=args.diffs,
+            language=args.language,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+    else:
+        assert args.spec is not None
+        assert args.language is not None
+        spec_eval = evaluate_spec_diff(
+            spec_path=args.spec,
+            diffs_path=args.diffs,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+        lang_eval = evaluate_language_diff(
+            diffs_path=args.diffs,
+            language=args.language,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+        evaluation = consolidate_evaluations(
+            spec_eval=spec_eval,
+            lang_eval=lang_eval,
+            spec_id=args.spec_id,
+        )
 
     if args.out_file:
         args.out_file.parent.mkdir(parents=True, exist_ok=True)

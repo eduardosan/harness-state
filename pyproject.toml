@@ -24,6 +24,7 @@ dependencies = [
 [project.scripts]
 harness-state = "harness_state.cli:main"
 harness = "harness_state.cli:main"
+harness-judge = "harness_state.judge:main"
 
 [build-system]
 requires = ["hatchling"]

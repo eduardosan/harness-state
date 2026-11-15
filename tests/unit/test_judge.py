@@ -16,6 +16,7 @@ from harness_state.judge import (
     build_gate_metric,
     build_judge_model,
     evaluate_fluent_python_stage,
+    evaluate_language_diff,
     evaluate_spec_diff,
     main,
     measure_metric_with_majority,
@@ -605,7 +606,7 @@ def test_evaluate_spec_diff_staged_both_approved(
     mock_build_fluent: MagicMock,
     tmp_path: Path,
 ) -> None:
-    """Business Rule: Avaliacao em etapas aprova quando funcional e fluente passam."""
+    """Business Rule: Gate funcional aprovado produz veredito APPROVED diretamente."""
     spec_file = tmp_path / "SPEC-001.md"
     spec_file.write_text("# SPEC-001\nRequisito: Entidade Pedido", encoding="utf-8")
     diffs_file = tmp_path / "diffs.patch"
@@ -625,12 +626,6 @@ def test_evaluate_spec_diff_staged_both_approved(
     mock_func_metric.is_successful.return_value = True
     mock_build_func.return_value = mock_func_metric
 
-    mock_fluent_metric = MagicMock()
-    mock_fluent_metric.score = 0.90
-    mock_fluent_metric.reason = "Uso correto de dataclasses."
-    mock_fluent_metric.is_successful.return_value = True
-    mock_build_fluent.return_value = mock_fluent_metric
-
     eval_result = evaluate_spec_diff(
         spec_path=spec_file,
         diffs_path=diffs_file,
@@ -643,20 +638,10 @@ def test_evaluate_spec_diff_staged_both_approved(
         eval_result.compliance_score is not None and eval_result.compliance_score >= 90
     )
     assert mock_build_func.called
-    assert mock_build_fluent.called
-    # Contrato da Etapa 1 (evidencia do preview 43633346713): o JUIZ recebe
-    # apenas o framing de auditoria negativa como input e o diff como
-    # actual_output — a spec fica FORA do contexto, pois com ela presente o
-    # modelo local tratou "nao alinhar com a especificacao" como violacao
-    # das regras negativas (3x0/100). O caso de teste ainda exige que o CLI
-    # leu a spec (arquivo obrigatorio p/ spec-id, logs e roteamento).
+    assert not mock_build_fluent.called
     called_func_case = mock_func_metric.measure.call_args[0][0]
     assert "# SPEC-001" not in called_func_case.input
     assert "+@dataclass" in called_func_case.actual_output
-    # Verifica que a chamada fluente recebeu diretrizes normativas e linhas adicionadas
-    called_fluent_case = mock_fluent_metric.measure.call_args[0][0]
-    assert "SPEC-PY-05" in called_fluent_case.input
-    assert "@dataclass" in called_fluent_case.actual_output
 
 
 @patch("harness_state.judge.build_fluent_python_metric")
@@ -666,7 +651,7 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
     mock_build_fluent: MagicMock,
     tmp_path: Path,
 ) -> None:
-    """Business Rule: Falha na etapa de Python Fluente rejeita o veredito com tag."""
+    """Business Rule: Aprovacao funcional nao e reprovada por LLM de estilo no judge."""
     spec_file = tmp_path / "SPEC-001.md"
     spec_file.write_text("# SPEC-001\nRequisito: Entidade Pedido", encoding="utf-8")
     diffs_file = tmp_path / "diffs.patch"
@@ -686,12 +671,6 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
     mock_func_metric.is_successful.return_value = True
     mock_build_func.return_value = mock_func_metric
 
-    mock_fluent_metric = MagicMock()
-    mock_fluent_metric.score = 0.60
-    mock_fluent_metric.reason = "Anti-padrao detectado na construcao da classe."
-    mock_fluent_metric.is_successful.return_value = False
-    mock_build_fluent.return_value = mock_fluent_metric
-
     eval_result = evaluate_spec_diff(
         spec_path=spec_file,
         diffs_path=diffs_file,
@@ -699,8 +678,9 @@ def test_evaluate_spec_diff_staged_fluent_rejected(
         api_key="ollama",
     )
 
-    assert eval_result.status == "REJECTED"
-    assert any("[Python Fluente]" in v for v in eval_result.violations)
+    assert eval_result.status == "APPROVED"
+    assert eval_result.compliance_score == 95
+    assert not mock_build_fluent.called
 
 
 @patch("harness_state.judge.build_fluent_python_metric")
@@ -1221,3 +1201,166 @@ def test_stage1_recupera_de_voto_ruidoso_por_maioria(
 
     assert result.status == "APPROVED"
     assert metric.calls == 3
+
+
+def test_main_cli_requires_spec_or_language(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Business Rule: CLI requer ao menos --spec ou --language, retornando código 2."""
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("dummy diff", encoding="utf-8")
+
+    exit_code = main(["--diffs", str(diffs_file)])
+    assert exit_code == 2
+
+    captured = capsys.readouterr()
+    assert "É necessário especificar ao menos --spec ou --language" in captured.err
+
+
+@patch("harness_state.judge.evaluate_spec_diff")
+def test_main_cli_spec_mode(
+    mock_evaluate_spec: MagicMock, tmp_path: Path
+) -> None:
+    """Business Rule: Modo --spec avalia exclusivamente o gate funcional da spec."""
+    spec_file = tmp_path / "SPEC-001.md"
+    spec_file.write_text("# SPEC-001", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+code", encoding="utf-8")
+
+    mock_evaluate_spec.return_value = JudgeEvaluation(
+        spec_id="SPEC-001",
+        compliance_score=100,
+        status="APPROVED",
+        summary="Gate funcional aprovado",
+        violations=[],
+        recommendations=[],
+    )
+
+    exit_code = main(["--spec", str(spec_file), "--diffs", str(diffs_file)])
+    assert exit_code == 0
+    mock_evaluate_spec.assert_called_once()
+
+
+@patch("harness_state.judge.evaluate_language_diff")
+def test_main_cli_language_mode(
+    mock_evaluate_lang: MagicMock, tmp_path: Path
+) -> None:
+    """Business Rule: Modo --language avalia conformidade com o harness da linguagem."""
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+def foo(): pass", encoding="utf-8")
+
+    mock_evaluate_lang.return_value = JudgeEvaluation(
+        spec_id="LANG-PYTHON",
+        compliance_score=95,
+        status="APPROVED",
+        summary="Código idiomático",
+        violations=[],
+        recommendations=[],
+    )
+
+    exit_code = main(["--language", "python", "--diffs", str(diffs_file)])
+    assert exit_code == 0
+    mock_evaluate_lang.assert_called_once()
+
+
+@patch("harness_state.judge.evaluate_language_diff")
+@patch("harness_state.judge.evaluate_spec_diff")
+def test_main_cli_combined_spec_and_language_mode(
+    mock_evaluate_spec: MagicMock,
+    mock_evaluate_lang: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: CLI combina avaliações quando --spec e --language são fornecidos."""
+    spec_file = tmp_path / "SPEC-001.md"
+    spec_file.write_text("# SPEC-001", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text("+code", encoding="utf-8")
+
+    mock_evaluate_spec.return_value = JudgeEvaluation(
+        spec_id="SPEC-001",
+        compliance_score=100,
+        status="APPROVED",
+        summary="Funcional OK",
+        violations=[],
+        recommendations=[],
+    )
+    mock_evaluate_lang.return_value = JudgeEvaluation(
+        spec_id="LANG-PYTHON",
+        compliance_score=75,
+        status="REJECTED",
+        summary="Anti-padrão detectado",
+        violations=["Violação de estilo"],
+        recommendations=["Refatorar"],
+    )
+
+    exit_code = main(
+        ["--spec", str(spec_file), "--language", "python", "--diffs", str(diffs_file)]
+    )
+    assert exit_code == 1
+    mock_evaluate_spec.assert_called_once()
+    mock_evaluate_lang.assert_called_once()
+
+
+def test_evaluate_language_diff_missing_diff_file(tmp_path: Path) -> None:
+    """Business Rule: Arquivo de diff inexistente resulta em REJECTED com score 0."""
+    missing_diff = tmp_path / "inexistente.patch"
+    evaluation = evaluate_language_diff(diffs_path=missing_diff, language="python")
+
+    assert evaluation.status == "REJECTED"
+    assert evaluation.compliance_score == 0
+    assert "Arquivo de diffs nao encontrado" in evaluation.summary
+
+
+def test_evaluate_language_diff_empty_or_non_python(tmp_path: Path) -> None:
+    """Business Rule: Diff sem arquivos Python é aprovado automaticamente."""
+    diff_file = tmp_path / "markdown_only.patch"
+    diff_file.write_text(
+        "diff --git a/docs/spec.md b/docs/spec.md\n"
+        "--- a/docs/spec.md\n"
+        "+++ b/docs/spec.md\n"
+        "@@ -1,1 +1,2 @@\n"
+        "+ Nova documentação\n",
+        encoding="utf-8",
+    )
+    evaluation = evaluate_language_diff(diffs_path=diff_file, language="python")
+
+    assert evaluation.status == "APPROVED"
+    assert evaluation.compliance_score == 100
+    assert "Sem arquivos Python modificados" in evaluation.summary
+
+
+@patch("harness_state.judge.collect_fluent_python_guidelines")
+@patch("harness_state.judge.build_judge_model")
+@patch("harness_state.judge.evaluate_fluent_python_stage")
+def test_evaluate_language_diff_approves_clean_python(
+    mock_evaluate_fluent: MagicMock,
+    mock_build_model: MagicMock,
+    mock_collect_guidelines: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Business Rule: Diff Python com diretrizes ativas aprovado por evaluate_language_diff."""
+    diff_file = tmp_path / "python.patch"
+    diff_file.write_text(
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        "+def saudacao() -> str:\n"
+        "+    return 'ola'\n",
+        encoding="utf-8",
+    )
+
+    mock_collect_guidelines.return_value = "### Regras\n- Manter funções puras"
+    mock_build_model.return_value = MagicMock()
+    mock_evaluate_fluent.return_value = (98, True, "Código idiomático")
+
+    evaluation = evaluate_language_diff(
+        diffs_path=diff_file,
+        language="python",
+        model="agentic-qwen",
+        fallback_model="agentic-qwen",
+    )
+
+    assert evaluation.status == "APPROVED"
+    assert evaluation.compliance_score == 98
+    assert evaluation.violations == []
