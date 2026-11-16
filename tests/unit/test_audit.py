@@ -39,8 +39,9 @@ def test_audit_sensitive_data_flags_forbidden_hosts(tmp_path: Path) -> None:
 def test_audit_sensitive_data_flags_raw_github_tokens(tmp_path: Path) -> None:
     """Business Rule: Detecta e aponta tokens reais de serviço ou pessoais (ghs_ / ghp_)."""
     bad_env_example = tmp_path / "config.example.yaml"
+    fake_token = "ghs_" + "123456789012345678901234567890"
     bad_env_example.write_text(
-        "token: ghs_123456789012345678901234567890\n", encoding="utf-8"
+        f"token: {fake_token}\n", encoding="utf-8"
     )
 
     with patch(
