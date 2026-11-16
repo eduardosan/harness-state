@@ -439,10 +439,6 @@ MAINTENANCE_POSITIVE_PHRASES = (
     "does not provide any code changes or modifications",
     "do not demonstrate any maintenance",
     "not relevant to the specification",
-    "does not violate any guideline",
-    "should receive full score",
-    "no violation",
-    "does not violate",
 )
 
 MAINTENANCE_NEGATIVE_REASONS = (

@@ -201,7 +201,11 @@ O `judge.py` atua como o juiz final no Cross-Repo Gate utilizando o framework De
   arquivo (`compact_diff_for_functional_stage`) para respeitar o orçamento de ~3.000
   tokens por chamada: diffs pequenos seguem íntegros; diffs multi-arquivo entregam
   linhas adicionadas compactadas (início/fim de cada arquivo) com prioridade para
-  código-fonte, depois testes e documentação, mantendo todos os caminhos visíveis ao juiz.
+  código-fonte e testes. Arquivos de documentação Markdown (`.md`) são desconsiderados
+  da avaliação funcional de código executável (`filter_diff_excluding_markdown`);
+  diffs compostos exclusivamente por documentação emitem skip explícito com status
+  `APPROVED` via `build_non_code_gate_skip`, prevenindo falsos positivos por ausência
+  de código.
 - **Critério de Aprovação:** todas as regras aprovadas por maioria; o score é a
   proporção de regras aprovadas × 100 e cada regra reprovada é reportada nominalmente
   com prefixo `[Funcional]`.
