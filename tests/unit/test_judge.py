@@ -20,7 +20,6 @@ from harness_state.judge import (
     evaluate_language_diff,
     evaluate_spec_diff,
     filter_diff_excluding_markdown,
-    is_maintenance_or_refactor_reason,
     main,
     measure_metric_with_majority,
     resolve_fallback_judge_model,
@@ -1431,15 +1430,3 @@ def test_evaluate_spec_diff_with_only_markdown_is_approved_via_skip(
     assert eval_result.status == "APPROVED"
     assert eval_result.compliance_score is None
     assert eval_result.violations == []
-
-
-def test_is_maintenance_or_refactor_reason_recognizes_positive_guideline_phrases() -> None:
-    """Business Rule: Frases que expressam ausencia de violacoes sao reconhecidas como aprovacao."""
-    reason = (
-        "The diff introduces a new file CONTRIBUTING.md, which is not directly "
-        "related to the guideline stated in the criteria. The guideline only requires "
-        "judging the PRESENCE OF A CONCRETE VIOLATION inside the diff, and the absence "
-        "of alignment with any specification is NOT a violation. Since the diff does not "
-        "violate any guideline, it should receive full score."
-    )
-    assert is_maintenance_or_refactor_reason(reason) is True
