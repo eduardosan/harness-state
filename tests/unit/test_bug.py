@@ -975,8 +975,9 @@ def test_record_bug_state_in_redis_closed_stage_archives() -> None:
 
 
 
-def test_send_bug_telemetry_to_es_posts_json() -> None:
+def test_send_bug_telemetry_to_es_posts_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """Business Rule: Telemetria do bugfix deve ser enviada ao Elasticsearch."""
+    monkeypatch.setenv("ES_URL", "http://127.0.0.1:9200")
     plan = BugPlan(
         title="[Bug] Timeout",
         summary="Timeout",
@@ -1272,12 +1273,16 @@ def test_elicit_bug_plan_with_agent_starts_new_session() -> None:
 
 
 
-def test_ensure_state_backends_available_reports_both_failures() -> None:
+def test_ensure_state_backends_available_reports_both_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Business Rule: O bug flow não prossegue sem Redis e Elasticsearch.
 
     A falha deve nomear explicitamente cada backend indisponível, em vez de
     degradar silenciosamente para um aviso em stderr.
     """
+    monkeypatch.setenv("ES_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("HARNESS_REDIS_HOST", "127.0.0.1")
     with (
         patch("harness_state.bug.redis.Redis") as mock_redis,
         patch(
@@ -1294,10 +1299,12 @@ def test_ensure_state_backends_available_reports_both_failures() -> None:
     assert "Elasticsearch" in message
 
 
-
-
-def test_ensure_state_backends_available_passes_when_both_reachable() -> None:
+def test_ensure_state_backends_available_passes_when_both_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Business Rule: Com Redis e Elasticsearch acessíveis o fluxo prossegue."""
+    monkeypatch.setenv("ES_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("HARNESS_REDIS_HOST", "127.0.0.1")
     mock_resp = MagicMock(status=200)
     mock_resp.__enter__.return_value = mock_resp
     with (
