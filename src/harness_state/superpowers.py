@@ -22,9 +22,9 @@ def get_default_superpowers_cache_dir() -> Path:
         ambiente canônica `HARNESS_SUPERPOWERS_CACHE_DIR`, aceitando a env legada
         `FLYWHEEL_SUPERPOWERS_CACHE_DIR` como fallback de compatibilidade.
     """
-    env_cache = os.environ.get(
-        "HARNESS_SUPERPOWERS_CACHE_DIR"
-    ) or os.environ.get("FLYWHEEL_SUPERPOWERS_CACHE_DIR")
+    env_cache = os.environ.get("HARNESS_SUPERPOWERS_CACHE_DIR") or os.environ.get(
+        "FLYWHEEL_SUPERPOWERS_CACHE_DIR"
+    )
     if env_cache:
         return Path(env_cache).expanduser().resolve()
     return Path.home() / ".cache" / "harness-state" / "superpowers"

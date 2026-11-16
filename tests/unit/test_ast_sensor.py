@@ -373,6 +373,7 @@ def test_ast_sensor_special_methods_pythonic_behavior() -> None:
     assert len(sensor) == 0
     assert list(sensor) == []
 
+
 def test_dunder_names_no_modulo_nao_sao_flagrados() -> None:
     """Business Rule: nomes dunder ('__all__', '__version__') NUNCA violam PYF007.
 

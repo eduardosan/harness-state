@@ -334,13 +334,17 @@ class FlywheelConfig:
     branch: str = "main"
     auto_release: bool = True
     release_strategy: str = "patch"
-    commit_message_template: str = "chore(flywheel): update harness-state to {{version}} [skip ci]"
+    commit_message_template: str = (
+        "chore(flywheel): update harness-state to {{version}} [skip ci]"
+    )
     tag_template: str = "flywheel/v{{version}}"
     prerelease: bool = False
     notify_slack: bool = False
 
 
-def run_command(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def run_command(
+    cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     """Executa comando e retorna resultado."""
     env_final = os.environ.copy()
     if env:
@@ -366,7 +370,9 @@ def write_file(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def init_flywheel(path: Path, version: str | None = None, config_file: Path | None = None) -> None:
+def init_flywheel(
+    path: Path, version: str | None = None, config_file: Path | None = None
+) -> None:
     """Inicializa um novo Flywheel Execution Engine."""
     path = path.resolve()
 
@@ -417,9 +423,17 @@ def init_flywheel(path: Path, version: str | None = None, config_file: Path | No
 
     # Workflows
     ensure_dir(path / ".github" / "workflows")
-    write_file(path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE)
-    write_file(path / ".github" / "workflows" / "spec-dispatch.yml", FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE)
-    write_file(path / ".github" / "workflows" / "capabilities-sync.yml", FLYWHEEL_WORKFLOW_CAPABILITIES_TEMPLATE)
+    write_file(
+        path / ".github" / "workflows" / "agent.yml", FLYWHEEL_WORKFLOW_AGENT_TEMPLATE
+    )
+    write_file(
+        path / ".github" / "workflows" / "spec-dispatch.yml",
+        FLYWHEEL_WORKFLOW_SPEC_DISPATCH_TEMPLATE,
+    )
+    write_file(
+        path / ".github" / "workflows" / "capabilities-sync.yml",
+        FLYWHEEL_WORKFLOW_CAPABILITIES_TEMPLATE,
+    )
 
     # README
     readme_content = f"""# {path.name} - Flywheel Execution Engine
@@ -459,10 +473,14 @@ harness flywheel status {path.name}
     console.print("  Estrutura criada com:")
     console.print("  - pyproject.toml (harness-state 0.4.0, agentic-flywheel 0.1.0)")
     console.print("  - config.yaml (flywheels gerenciados)")
-    console.print("  - .github/workflows/ (agent.yml, spec-dispatch.yml, capabilities-sync.yml)")
+    console.print(
+        "  - .github/workflows/ (agent.yml, spec-dispatch.yml, capabilities-sync.yml)"
+    )
     console.print("  - catalog/, sensors/, agents.py (usam harness_state.*)")
     console.print("  - README.md com instruções")
-    console.print(f"\nPara atualizar: [bold white]harness flywheel update {path}[/bold white]")
+    console.print(
+        f"\nPara atualizar: [bold white]harness flywheel update {path}[/bold white]"
+    )
 
 
 def check_flywheel_status(path: Path) -> None:
@@ -475,13 +493,16 @@ def check_flywheel_status(path: Path) -> None:
 
     pyproject_path = path / "pyproject.toml"
     if not pyproject_path.exists():
-        console.print("[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
+        console.print(
+            "[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml)."
+        )
         raise SystemExit(1)
 
     console.print(f"[bold cyan]Status do Flywheel: {path.name}[/bold cyan]")
 
     # Verifica pyproject.toml
     import tomllib
+
     with open(path / "pyproject.toml", "rb") as f:
         pyproject = tomllib.load(f)
 
@@ -493,7 +514,11 @@ def check_flywheel_status(path: Path) -> None:
     # Verifica imports
     console.print("\n[bold cyan]Validação de imports:[/bold cyan]")
     all_ok = True
-    for module_name in ("harness_state.catalog", "harness_state.sensors", "harness_state.agents"):
+    for module_name in (
+        "harness_state.catalog",
+        "harness_state.sensors",
+        "harness_state.agents",
+    ):
         try:
             __import__(module_name)
             console.print(f"  [green]✓[/green] {module_name}")
@@ -520,7 +545,9 @@ def load_flywheel_config(config_path: Path) -> list[dict[str, Any]]:
         return []
 
 
-def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, strategy_semver: str = "patch") -> None:
+def update_all_flywheels(
+    dry_run: bool = False, strategy: str | None = None, strategy_semver: str = "patch"
+) -> None:
     """Atualiza todos os flywheels configurados no config.yaml."""
     config_path = Path("config.yaml")
     flywheels = load_flywheel_config(config_path)
@@ -543,7 +570,10 @@ def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, str
         fw.get("branch", "main")
         auto_release = fw.get("auto_release", True)
         release_strategy = fw.get("release_strategy", "patch")
-        fw.get("commit_message_template", "chore(flywheel): update harness-state to {{version}} [skip ci]")
+        fw.get(
+            "commit_message_template",
+            "chore(flywheel): update harness-state to {{version}} [skip ci]",
+        )
         fw.get("tag_template", "flywheel/v{{version}}")
         fw.get("prerelease", False)
 
@@ -574,7 +604,9 @@ def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, str
             new_version = "0.4.1"  # seria calculado baseado na estratégia
             if auto_release:
                 tag = f"flywheel/v{new_version}"
-                console.print(f"  [green]✓[/green] Release: {tag} (strategy: {release_strategy})")
+                console.print(
+                    f"  [green]✓[/green] Release: {tag} (strategy: {release_strategy})"
+                )
 
             results.append((name, True, f"updated to {new_version}"))
         except Exception as e:  # noqa: BLE001
@@ -591,7 +623,9 @@ def update_all_flywheels(dry_run: bool = False, strategy: str | None = None, str
     console.print(f"\nTotal: {success_count}/{len(results)} sucessos")
 
 
-def update_flywheel(path: Path, version: str | None = None, dry_run: bool = False) -> None:
+def update_flywheel(
+    path: Path, version: str | None = None, dry_run: bool = False
+) -> None:
     """Atualiza um flywheel existente - implementação completa."""
     path = path.resolve()
 
@@ -601,7 +635,9 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     pyproject_path = path / "pyproject.toml"
     if not pyproject_path.exists():
-        console.print("[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml).")
+        console.print(
+            "[bold red]Erro:[/bold red] Não é um flywheel válido (sem pyproject.toml)."
+        )
         raise SystemExit(1)
 
     console.print(f"[bold cyan]Atualizando Flywheel em {path}...[/bold cyan]")
@@ -611,6 +647,7 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     # Lê pyproject.toml atual
     import tomllib
+
     with open(path / "pyproject.toml", "rb") as f:
         pyproject = tomllib.load(f)
 
@@ -619,7 +656,9 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
     current_agentic = next((d for d in deps if d.startswith("agentic-flywheel")), None)
 
     console.print(f"Versão atual harness-state: {current_harness or 'não encontrado'}")
-    console.print(f"Versão atual agentic-flywheel: {current_agentic or 'não encontrado'}")
+    console.print(
+        f"Versão atual agentic-flywheel: {current_agentic or 'não encontrado'}"
+    )
 
     if dry_run:
         console.print("[yellow]DRY RUN: nenhuma alteração aplicada[/yellow]")
@@ -645,9 +684,12 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
         pyproject["project"]["dependencies"] = new_deps
         import tomli_w
+
         with open(path / "pyproject.toml", "wb") as f:
             tomli_w.dump(pyproject, f)
-        console.print(f"  [green]✓[/green] pyproject.toml atualizado para versão {version}")
+        console.print(
+            f"  [green]✓[/green] pyproject.toml atualizado para versão {version}"
+        )
 
     # Roda pip install -U
     console.print("[bold cyan]Instalando dependências atualizadas...[/bold cyan]")
@@ -659,15 +701,22 @@ def update_flywheel(path: Path, version: str | None = None, dry_run: bool = Fals
 
     # Valida imports
     console.print("[bold cyan]Validando imports de harness_state.*...[/bold cyan]")
-    validation_result = run_command([
-        sys.executable, "-c",
-        ("from harness_state import catalog, sensors, agents; "
-        "print('OK')")
-    ], cwd=path)
+    validation_result = run_command(
+        [
+            sys.executable,
+            "-c",
+            ("from harness_state import catalog, sensors, agents; print('OK')"),
+        ],
+        cwd=path,
+    )
 
     if validation_result.returncode != 0:
-        console.print(f"[red]✗[/red] Falha na validação de imports: {validation_result.stderr}")
+        console.print(
+            f"[red]✗[/red] Falha na validação de imports: {validation_result.stderr}"
+        )
         raise SystemExit(1)
     console.print("  [green]✓[/green] Imports válidos")
 
-    console.print(f"\n[bold green]✓[/bold green] Flywheel {path.name} atualizado com sucesso")
+    console.print(
+        f"\n[bold green]✓[/bold green] Flywheel {path.name} atualizado com sucesso"
+    )

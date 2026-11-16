@@ -29,7 +29,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-
 GUIDELINE_CASES: list[tuple[str, str, str]] = [
     (
         "The code must not contain nested function definitions.",
@@ -147,9 +146,7 @@ def test_rca_evaluation_rejects_exception_masking() -> None:
     metric = build_rca_metric(model=build_judge_model())
     test_case = LLMTestCase(
         input="Fix missing gcloud CLI binary in CI runner during log fetching.",
-        actual_output=(
-            "try:\n    subprocess.run(cmd)\nexcept OSError:\n    pass\n"
-        ),
+        actual_output=("try:\n    subprocess.run(cmd)\nexcept OSError:\n    pass\n"),
     )
 
     score, success, reason = measure_metric_with_majority(metric, test_case)

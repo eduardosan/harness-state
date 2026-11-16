@@ -198,4 +198,3 @@ def test_update_task_status_aceita_kwargs_de_tracking_issue_e_versao() -> None:
     assert updated.expected_version == "0.8.0"
     assert updated.issue_number == 55
     assert updated.issue_url == "https://github.com/eduardosan/hub/issues/55"
-

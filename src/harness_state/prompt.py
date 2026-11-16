@@ -44,7 +44,6 @@ TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"}
 TRUSTED_BOT_SUFFIX = "[bot]"
 
 
-
 def ensure_trusted(issue: Issue) -> None:
     """Garante que o autor da issue pertence ao grupo de autores confiaveis.
 

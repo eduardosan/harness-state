@@ -34,6 +34,7 @@ PHASE2_SPECS = [
     "SPEC-PY-04-text-and-bytes.md",
 ]
 
+
 @pytest.mark.parametrize("spec_filename", PHASE2_SPECS)
 def test_phase2_spec_files_exist_and_follow_template(spec_filename: str) -> None:
     """Business Rule: specs da Fase 2 devem existir e seguir o molde canonico.
@@ -56,31 +57,29 @@ def test_phase2_spec_files_exist_and_follow_template(spec_filename: str) -> None
 
 RULE_CASES: list[tuple[str, str, str]] = [
     (
-        'Prefer list comprehensions or generator expressions over map/filter combined with lambda; comprehensions must be free of side effects.',
+        "Prefer list comprehensions or generator expressions over map/filter combined with lambda; comprehensions must be free of side effects.",
         "names = [row.split(',')[0] for row in rows if row.strip()]\n",
         "names = list(map(lambda r: r.split(',')[0], filter(lambda r: r, rows)))\n",
     ),
     (
-        'Use modern dict handling (setdefault/defaultdict/UserDict) and never subclass built-in dict directly.',
-        'from collections import defaultdict\n\ncounts: dict[str, int] = defaultdict(int)\nfor row in rows:\n    counts[row] += 1\n',
-        'class CountedDict(dict):\n    def bump(self, key):\n        self[key] = self.get(key, 0) + 1\n',
+        "Use modern dict handling (setdefault/defaultdict/UserDict) and never subclass built-in dict directly.",
+        "from collections import defaultdict\n\ncounts: dict[str, int] = defaultdict(int)\nfor row in rows:\n    counts[row] += 1\n",
+        "class CountedDict(dict):\n    def bump(self, key):\n        self[key] = self.get(key, 0) + 1\n",
     ),
     (
-        'Always pass an explicit encoding when opening text files (Unicode sandwich).',
+        "Always pass an explicit encoding when opening text files (Unicode sandwich).",
         "from pathlib import Path\n\ndef read_lines(path: Path) -> list[str]:\n    with path.open(encoding='utf-8') as handle:\n        return [line.strip() for line in handle]\n",
-        'def read_lines(path):\n    return open(path).read().splitlines()\n',
+        "def read_lines(path):\n    return open(path).read().splitlines()\n",
     ),
     (
-        'Prefer generator functions over loading entire large collections in memory when streaming file lines.',
+        "Prefer generator functions over loading entire large collections in memory when streaming file lines.",
         "def rows(path):\n    with path.open(encoding='utf-8') as handle:\n        for line in handle:\n            if line.strip():\n                yield line.strip()\n",
         "def rows(path):\n    data = open(path, encoding='utf-8').read()\n    return data.splitlines()\n",
     ),
 ]
 
 
-def build_single_rule_metric(
-    model: OpenAIModel, rule: str, name: str
-) -> GEval:
+def build_single_rule_metric(model: OpenAIModel, rule: str, name: str) -> GEval:
     """Cria uma GEval de regra única para avaliar conformidade pontual.
 
     Multiplas regras em uma só criteria induzem juizes 7B a pontuarem
@@ -99,8 +98,9 @@ def build_single_rule_metric(
         name=name,
         criteria=(
             "Assess the code against exactly ONE guideline, stated below. "
-            "Guideline: " + rule +
-            " Judge only compliance with this guideline. The size or "
+            "Guideline: "
+            + rule
+            + " Judge only compliance with this guideline. The size or "
             "structure of the code is irrelevant: a snippet may contain "
             "any number of functions and classes."
         ),
@@ -133,7 +133,6 @@ def build_phase2_metric(model: OpenAIModel) -> GEval:
         RULE_CASES[0][0],
         "Fluent Python Phase 2 Rule 1",
     )
-
 
 
 def test_phase2_metric_factory_uses_single_rule_and_strict_threshold() -> None:
@@ -182,8 +181,5 @@ def test_phase2_real_llm_forced_choice_discriminates_each_rule() -> None:
             votes.append((100 if ok else 0, ok, raw.strip()[:60]))
         score, success, reason = aggregate_functional_votes(votes)
         if not success:
-            failures.append(
-                f"{name}: esperado={choice} votos={reason} "
-                f"(score={score})"
-            )
+            failures.append(f"{name}: esperado={choice} votos={reason} (score={score})")
     assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)

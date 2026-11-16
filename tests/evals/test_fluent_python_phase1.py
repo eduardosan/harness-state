@@ -34,6 +34,7 @@ PHASE1_SPECS = [
     "SPEC-PY-06-references-and-mutability.md",
 ]
 
+
 @pytest.mark.parametrize("spec_filename", PHASE1_SPECS)
 def test_phase1_spec_files_exist_and_follow_template(spec_filename: str) -> None:
     """Business Rule: specs da Fase 1 devem existir e seguir o molde canonico.
@@ -56,26 +57,24 @@ def test_phase1_spec_files_exist_and_follow_template(spec_filename: str) -> None
 
 RULE_CASES: list[tuple[str, str, str]] = [
     (
-        'Never use mutable default parameter values (e.g., def f(items=[])); use None and build the list inside the body.',
-        'def collect(items: list[str] | None = None) -> list[str]:\n    return list(items) if items is not None else []\n',
+        "Never use mutable default parameter values (e.g., def f(items=[])); use None and build the list inside the body.",
+        "def collect(items: list[str] | None = None) -> list[str]:\n    return list(items) if items is not None else []\n",
         "def collect(items: list[str] = []) -> list[str]:\n    items.append('x')\n    return items\n",
     ),
     (
-        'Domain entities must use @dataclass(slots=True, kw_only=True) with field(default_factory=...) for mutable attributes (or NamedTuple), instead of hand-rolled dict subclasses.',
-        'from dataclasses import dataclass, field\n\n\n@dataclass(slots=True, kw_only=True)\nclass Order:\n    id: int\n    items: list[str] = field(default_factory=list)\n',
+        "Domain entities must use @dataclass(slots=True, kw_only=True) with field(default_factory=...) for mutable attributes (or NamedTuple), instead of hand-rolled dict subclasses.",
+        "from dataclasses import dataclass, field\n\n\n@dataclass(slots=True, kw_only=True)\nclass Order:\n    id: int\n    items: list[str] = field(default_factory=list)\n",
         "class Order(dict):\n    def __init__(self, id, items=None):\n        self['items'] = items or []\n",
     ),
     (
-        'Classes representing collections must implement Python Data Model dunders (e.g., __len__, __repr__) instead of Java-style accessor methods.',
+        "Classes representing collections must implement Python Data Model dunders (e.g., __len__, __repr__) instead of Java-style accessor methods.",
         'class Cart:\n    def __init__(self) -> None:\n        self._items: list[str] = []\n\n    def __len__(self) -> int:\n        return len(self._items)\n\n    def __repr__(self) -> str:\n        return f"Cart({len(self)})"\n',
-        'class Cart:\n    def __init__(self) -> None:\n        self._items: list[str] = []\n\n    def get_size(self):\n        return len(self._items)\n',
+        "class Cart:\n    def __init__(self) -> None:\n        self._items: list[str] = []\n\n    def get_size(self):\n        return len(self._items)\n",
     ),
 ]
 
 
-def build_single_rule_metric(
-    model: OpenAIModel, rule: str, name: str
-) -> GEval:
+def build_single_rule_metric(model: OpenAIModel, rule: str, name: str) -> GEval:
     """Cria uma GEval de regra única para avaliar conformidade pontual.
 
     Multiplas regras em uma só criteria induzem juizes 7B a pontuarem
@@ -94,8 +93,9 @@ def build_single_rule_metric(
         name=name,
         criteria=(
             "Assess the code against exactly ONE guideline, stated below. "
-            "Guideline: " + rule +
-            " Judge only compliance with this guideline. The size or "
+            "Guideline: "
+            + rule
+            + " Judge only compliance with this guideline. The size or "
             "structure of the code is irrelevant: a snippet may contain "
             "any number of functions and classes."
         ),
@@ -128,7 +128,6 @@ def build_phase1_metric(model: OpenAIModel) -> GEval:
         RULE_CASES[0][0],
         "Fluent Python Phase 1 Rule 1",
     )
-
 
 
 def test_phase1_metric_factory_uses_single_rule_and_strict_threshold() -> None:
@@ -177,8 +176,5 @@ def test_phase1_real_llm_forced_choice_discriminates_each_rule() -> None:
             votes.append((100 if ok else 0, ok, raw.strip()[:60]))
         score, success, reason = aggregate_functional_votes(votes)
         if not success:
-            failures.append(
-                f"{name}: esperado={choice} votos={reason} "
-                f"(score={score})"
-            )
+            failures.append(f"{name}: esperado={choice} votos={reason} (score={score})")
     assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)

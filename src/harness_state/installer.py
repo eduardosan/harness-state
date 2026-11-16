@@ -26,7 +26,6 @@ class HarnessInitResult:
     config_file: str = ""
 
 
-
 def get_catalog_root() -> Path:
     """Retorna o diretório raiz do catálogo de harnesses embutido no pacote.
 

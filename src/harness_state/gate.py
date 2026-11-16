@@ -1,4 +1,3 @@
-
 def resolve_redis_host(provided_host: str = "") -> str:
     """Resolve o host Redis considerando env vars e fallback local."""
     return (
@@ -40,6 +39,7 @@ def resolve_default_flywheel_repo(provided_repo: str = "") -> str:
         or os.environ.get("FLYWHEEL_REPO", "")
         or "paralax-ia/agentic-flywheel"
     )
+
 
 """Módulo de Fechamento Transacional do Cross-Repo Harness Gate."""
 

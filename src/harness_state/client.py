@@ -62,7 +62,7 @@ def derive_hub_ecosystem(hub_dir: Path) -> str:
     """
     name = hub_dir.name
     if name.endswith("-spec-hub"):
-        return name[:-len("-spec-hub")]
+        return name[: -len("-spec-hub")]
     return name
 
 

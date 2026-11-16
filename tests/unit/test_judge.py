@@ -387,7 +387,7 @@ def test_fluent_stage_actual_output_is_added_code_not_diff_scaffolding(
         "+++ b/b.py\n"
         "@@ -1,1 +1,3 @@\n"
         "+def g() -> str:\n"
-        "+    return \"ok\"\n"
+        '+    return "ok"\n'
     )
     evaluate_fluent_python_stage(
         judge_model=MagicMock(),
@@ -459,9 +459,7 @@ def test_battery_approves_only_when_every_rule_passes_by_majority() -> None:
 
     rules = [
         BatteryRuleFake("Gate Rule Integrity", [0.95, 0.95, 0.95], [True] * 3),
-        BatteryRuleFake(
-            "Gate Rule Masking", [0.95, 0.05, 0.05], [True, False, False]
-        ),
+        BatteryRuleFake("Gate Rule Masking", [0.95, 0.05, 0.05], [True, False, False]),
         BatteryRuleFake("Gate Rule Contracts", [0.95, 0.95, 0.95], [True] * 3),
     ]
     battery = FunctionalRuleBattery(rules=rules)
@@ -1184,9 +1182,11 @@ def test_stage1_recupera_de_voto_ruidoso_por_maioria(
     """Business Rule: um voto 30/100 entre dois 95+ resulta em APPROVED —
     a maioria filtra o ruído do juiz de 7B sem afrouxar o limiar."""
     spec_file = tmp_path / "SPEC-012.md"
-    spec_file.write_text("# SPEC-012\nRequisito: campo novo no payload", encoding="utf-8")
+    spec_file.write_text(
+        "# SPEC-012\nRequisito: campo novo no payload", encoding="utf-8"
+    )
     diffs_file = tmp_path / "diffs.patch"
-    diffs_file.write_text("+    novo_campo: str = \"\"\n", encoding="utf-8")
+    diffs_file.write_text('+    novo_campo: str = ""\n', encoding="utf-8")
 
     metric = RecordingMetric(scores=[0.3, 0.96, 0.96], oks=[False, True, True])
     mock_build_metric.return_value = metric
@@ -1218,9 +1218,7 @@ def test_main_cli_requires_spec_or_language(
 
 
 @patch("harness_state.judge.evaluate_spec_diff")
-def test_main_cli_spec_mode(
-    mock_evaluate_spec: MagicMock, tmp_path: Path
-) -> None:
+def test_main_cli_spec_mode(mock_evaluate_spec: MagicMock, tmp_path: Path) -> None:
     """Business Rule: Modo --spec avalia exclusivamente o gate funcional da spec."""
     spec_file = tmp_path / "SPEC-001.md"
     spec_file.write_text("# SPEC-001", encoding="utf-8")
@@ -1242,9 +1240,7 @@ def test_main_cli_spec_mode(
 
 
 @patch("harness_state.judge.evaluate_language_diff")
-def test_main_cli_language_mode(
-    mock_evaluate_lang: MagicMock, tmp_path: Path
-) -> None:
+def test_main_cli_language_mode(mock_evaluate_lang: MagicMock, tmp_path: Path) -> None:
     """Business Rule: Modo --language avalia conformidade com o harness da linguagem."""
     diffs_file = tmp_path / "diffs.patch"
     diffs_file.write_text("+def foo(): pass", encoding="utf-8")

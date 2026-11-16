@@ -32,11 +32,17 @@ async def test_run_init_creates_spec() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_status_displays_spec_info(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_run_status_displays_spec_info(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Business Rule: A exibição de status deve renderizar os detalhes da especificação e suas tarefas."""
     store = InMemoryStateStore()
     spec = SpecRun(spec_id="SPEC-020", title="Feature 20", author="author-2")
-    spec.add_task(SubTask(id="task-1", repo="repo-a", branch="feat/a", status=TaskState.IN_PROGRESS))
+    spec.add_task(
+        SubTask(
+            id="task-1", repo="repo-a", branch="feat/a", status=TaskState.IN_PROGRESS
+        )
+    )
     await store.save_spec(spec)
 
     await run_status("SPEC-020", store=store)
@@ -54,7 +60,9 @@ async def test_run_update_changes_task_status() -> None:
     spec.add_task(SubTask(id="task-1", repo="repo-a", branch="feat/a"))
     await store.save_spec(spec)
 
-    await run_update("SPEC-030", "task-1", "READY", worker="worker-99", pr=55, store=store)
+    await run_update(
+        "SPEC-030", "task-1", "READY", worker="worker-99", pr=55, store=store
+    )
 
     updated = await store.get_spec("SPEC-030")
     assert updated is not None
@@ -76,7 +84,13 @@ async def test_run_plan_from_file(tmp_path: Path) -> None:
     spec_file.write_text(spec_content, encoding="utf-8")
 
     store = InMemoryStateStore()
-    await run_plan(spec_file=str(spec_file), spec_id=None, title=None, author="planner-agent", store=store)
+    await run_plan(
+        spec_file=str(spec_file),
+        spec_id=None,
+        title=None,
+        author="planner-agent",
+        store=store,
+    )
 
     saved = await store.get_spec("SPEC-040")
     assert saved is not None
@@ -89,11 +103,17 @@ async def test_run_plan_from_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_resume_identifies_pending_task(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_run_resume_identifies_pending_task(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Business Rule: O comando resume deve apontar a próxima tarefa pendente para o operador."""
     store = InMemoryStateStore()
     spec = SpecRun(spec_id="SPEC-050", title="Feature 50", author="author-5")
-    spec.add_task(SubTask(id="task-1", repo="repo-a", branch="feat/spec-50", status=TaskState.PENDING))
+    spec.add_task(
+        SubTask(
+            id="task-1", repo="repo-a", branch="feat/spec-50", status=TaskState.PENDING
+        )
+    )
     await store.save_spec(spec)
 
     await run_resume("SPEC-050", store=store)
@@ -162,7 +182,9 @@ async def test_run_plan_with_manifest_topological_waves(tmp_path: Path) -> None:
     assert len(saved.tasks) == 2
 
     crm_task = next(t for t in saved.tasks.values() if "paralax-evo-crm" in t.repo)
-    vehicles_task = next(t for t in saved.tasks.values() if "customer-support-vehicles" in t.repo)
+    vehicles_task = next(
+        t for t in saved.tasks.values() if "customer-support-vehicles" in t.repo
+    )
 
     assert crm_task.wave == 1
     assert vehicles_task.wave == 2
@@ -178,3 +200,49 @@ def test_parse_spec_markdown_namespaced_branch(tmp_path: Path) -> None:
     )
     _, _, tasks = parse_spec_markdown(spec, ecosystem="harness")
     assert tasks["task-1"].branch == "agent/harness-spec-004-agentic-flywheel"
+
+
+def test_cli_install_command(tmp_path: Path) -> None:
+    """Business Rule: `harness install` configura os templates de harness no projeto."""
+    runner = CliRunner()
+    target_repo = tmp_path / "spoke_repo"
+    target_repo.mkdir()
+    (target_repo / "pyproject.toml").write_text(
+        "[project]\nname = 'test'\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(main, ["install", "--path", str(target_repo)])
+    assert result.exit_code == 0
+    assert "Harness instalado com sucesso" in result.output
+    assert (target_repo / "AGENTS.md").is_file()
+
+
+def test_cli_release_command(tmp_path: Path) -> None:
+    """Business Rule: `harness release` calcula a próxima versão semântica."""
+    runner = CliRunner()
+    repo_dir = tmp_path / "release_repo"
+    repo_dir.mkdir()
+    (repo_dir / "pyproject.toml").write_text(
+        "[project]\nname = 'test'\nversion = '1.2.3'\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        main, ["release", "--repo-dir", str(repo_dir), "--strategy", "minor"]
+    )
+    assert result.exit_code == 0
+    assert "1.3.0" in result.output
+
+
+def test_cli_audit_command_passes_when_clean(tmp_path: Path) -> None:
+    """Business Rule: `harness audit` valida mask-sensitive-data e aprova repositório limpo."""
+    runner = CliRunner()
+    clean_repo = tmp_path / "clean_repo"
+    clean_repo.mkdir()
+    (clean_repo / "README.md").write_text(
+        "# Doc limpa sem dados sensiveis\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(main, ["audit", "--path", str(clean_repo)])
+    assert result.exit_code == 0
+    assert "mask-sensitive-data: Nenhuma violação detectada" in result.output
