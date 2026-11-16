@@ -15,9 +15,12 @@ from harness_state.judge import (
     build_fluent_python_metric,
     build_gate_metric,
     build_judge_model,
+    build_non_code_gate_skip,
     evaluate_fluent_python_stage,
     evaluate_language_diff,
     evaluate_spec_diff,
+    filter_diff_excluding_markdown,
+    is_maintenance_or_refactor_reason,
     main,
     measure_metric_with_majority,
     resolve_fallback_judge_model,
@@ -1360,3 +1363,83 @@ def test_evaluate_language_diff_approves_clean_python(
     assert evaluation.status == "APPROVED"
     assert evaluation.compliance_score == 98
     assert evaluation.violations == []
+
+
+def test_filter_diff_excluding_markdown_removes_md_files() -> None:
+    """Business Rule: O filtro de diff deve remover blocos .md e manter codigo."""
+    diff_content = (
+        "diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md\n"
+        "--- /dev/null\n"
+        "+++ b/CONTRIBUTING.md\n"
+        "@@ -0,0 +1,5 @@\n"
+        "+# Como contribuir\n"
+        "diff --git a/src/core.py b/src/core.py\n"
+        "--- a/src/core.py\n"
+        "+++ b/src/core.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        "+def run(): pass\n"
+    )
+    filtered = filter_diff_excluding_markdown(diff_content)
+    assert "CONTRIBUTING.md" not in filtered
+    assert "src/core.py" in filtered
+    assert "def run(): pass" in filtered
+
+
+def test_build_non_code_gate_skip_when_diff_is_only_markdown() -> None:
+    """Business Rule: Diffs compostos apenas de .md recebem skip aprovado sem erro."""
+    diff_content = (
+        "diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md\n"
+        "--- /dev/null\n"
+        "+++ b/CONTRIBUTING.md\n"
+        "@@ -0,0 +1,5 @@\n"
+        "+# Como contribuir\n"
+    )
+    result = build_non_code_gate_skip(
+        effective_spec_id="SPEC-009",
+        spec_content="# SPEC-009\nRequisitos de codigo",
+        diffs_content=diff_content,
+    )
+    assert result is not None
+    assert result.status == "APPROVED"
+    assert result.compliance_score is None
+    assert "documentação .md" in result.summary
+
+
+def test_evaluate_spec_diff_with_only_markdown_is_approved_via_skip(
+    tmp_path: Path,
+) -> None:
+    """Business Rule: Avaliacao de spec contra diff exclusivo de .md e aprovada via skip."""
+    spec_file = tmp_path / "SPEC-009.md"
+    spec_file.write_text("# SPEC-009\nRequisitos de codigo", encoding="utf-8")
+    diffs_file = tmp_path / "diffs.patch"
+    diffs_file.write_text(
+        "diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md\n"
+        "--- /dev/null\n"
+        "+++ b/CONTRIBUTING.md\n"
+        "@@ -0,0 +1,5 @@\n"
+        "+# Guia de contribuicao\n",
+        encoding="utf-8",
+    )
+
+    eval_result = evaluate_spec_diff(
+        spec_path=spec_file,
+        diffs_path=diffs_file,
+        base_url="http://127.0.0.1:11435/v1",
+        api_key="secret",
+    )
+
+    assert eval_result.status == "APPROVED"
+    assert eval_result.compliance_score is None
+    assert eval_result.violations == []
+
+
+def test_is_maintenance_or_refactor_reason_recognizes_positive_guideline_phrases() -> None:
+    """Business Rule: Frases que expressam ausencia de violacoes sao reconhecidas como aprovacao."""
+    reason = (
+        "The diff introduces a new file CONTRIBUTING.md, which is not directly "
+        "related to the guideline stated in the criteria. The guideline only requires "
+        "judging the PRESENCE OF A CONCRETE VIOLATION inside the diff, and the absence "
+        "of alignment with any specification is NOT a violation. Since the diff does not "
+        "violate any guideline, it should receive full score."
+    )
+    assert is_maintenance_or_refactor_reason(reason) is True
