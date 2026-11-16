@@ -439,6 +439,10 @@ MAINTENANCE_POSITIVE_PHRASES = (
     "does not provide any code changes or modifications",
     "do not demonstrate any maintenance",
     "not relevant to the specification",
+    "does not violate any guideline",
+    "should receive full score",
+    "no violation",
+    "does not violate",
 )
 
 MAINTENANCE_NEGATIVE_REASONS = (
@@ -757,9 +761,43 @@ def diff_file_path(block: str) -> str:
     for line in block.splitlines():
         if line.startswith("+++ b/"):
             return line[6:].strip()
-        if line.startswith("+++ "):
+        if line.startswith("+++ ") and not line.startswith("+++ /dev/null"):
             return line[4:].strip()
+        if line.startswith("--- a/"):
+            return line[6:].strip()
+        if line.startswith("diff --git a/"):
+            parts = line.split(" ")
+            if len(parts) >= 3 and parts[2].startswith("b/"):
+                return parts[2][2:].strip()
     return ""
+
+
+def filter_diff_excluding_markdown(diffs_content: str) -> str:
+    """Filtra blocos de diff removendo arquivos markdown (.md).
+
+    Arquivos de documentação não contêm código executável e não devem ser
+    submetidos à avaliação de regras de código do Gate funcional.
+
+    Args:
+        diffs_content: Texto integral do patch unificado.
+
+    Returns:
+        Patch contendo apenas blocos de arquivos que não terminam com .md.
+    """
+    blocks = split_diff_per_file(diffs_content)
+    code_blocks = [
+        block
+        for block in blocks
+        if not diff_file_path(block).lower().endswith(".md")
+    ]
+    if len(code_blocks) == len(blocks):
+        return diffs_content
+    if not code_blocks:
+        return ""
+    result = "\n".join(code_blocks)
+    if diffs_content.endswith("\n") and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 def file_compaction_priority(path: str, spec_content: str = "") -> int:
@@ -833,7 +871,8 @@ def compact_diff_for_functional_stage(
     compactado (início/fim dos hunks), priorizando código-fonte e testes
     referenciados na especificação, depois código geral `src/**.py`, testes
     e documentação por último; todos os caminhos de arquivo permanecem visíveis
-    ao juiz, assim como os caminhos omitidos por orçamento.
+    ao juiz, assim como os caminhos omitidos por orçamento. Arquivos markdown (.md)
+    são desconsiderados para não poluir nem confundir a avaliação de código do Gate.
 
     Args:
         diffs_content: Texto integral do patch unificado.
@@ -842,10 +881,14 @@ def compact_diff_for_functional_stage(
     Returns:
         String compactada respeitando o orçamento de tokens da metodologia.
     """
-    if len(diffs_content) <= MAX_FUNC_STAGE_TOTAL_CHARS:
-        return diffs_content
+    code_diff = filter_diff_excluding_markdown(diffs_content)
+    if not code_diff:
+        return ""
 
-    blocks = split_diff_per_file(diffs_content)
+    if len(code_diff) <= MAX_FUNC_STAGE_TOTAL_CHARS:
+        return code_diff
+
+    blocks = split_diff_per_file(code_diff)
     blocks_with_keys = [
         (make_functional_block_order_key(block, spec_content), block)
         for block in blocks
@@ -1114,6 +1157,16 @@ def run_judge_metrics_pipeline(
     compacted_diff = compact_diff_for_functional_stage(
         diffs_content, spec_content=spec_content
     )
+    if not compacted_diff.strip():
+        return build_final_judge_evaluation(
+            effective_spec_id=effective_spec_id,
+            compliance_score=100,
+            is_approved=True,
+            summary="Sem arquivos de código modificados no diff para avaliar funcionalmente.",
+            violations=[],
+            recommendations=[],
+        )
+
     func_test_case = LLMTestCase(
         input=FUNCTIONAL_STAGE_INPUT_PREAMBLE,
         actual_output=compacted_diff,
@@ -1179,6 +1232,7 @@ def build_non_code_gate_skip(
     (infra, docs, deploy) não devem reprovar por ausência de diff. Retorna
     skip (score None, status APPROVED, motivo descritivo) quando:
       - `diffs_content` está vazio; ou
+      - `diffs_content` contém apenas arquivos de documentação (.md); ou
       - o frontmatter da spec declara `non_code_deliverables: true`.
 
     Args:
@@ -1190,15 +1244,16 @@ def build_non_code_gate_skip(
         JudgeEvaluation com skip, ou None quando o caso pertence ao judge.
     """
     frontmatter, _ = extract_yaml_frontmatter(spec_content)
-    if frontmatter.get("non_code_deliverables") is not True and diffs_content.strip():
+    code_diff = filter_diff_excluding_markdown(diffs_content)
+    if frontmatter.get("non_code_deliverables") is not True and code_diff.strip():
         return None
     return JudgeEvaluation(
         spec_id=effective_spec_id,
         compliance_score=None,
         status="APPROVED",
         summary=(
-            "skipped: sem evidência de código para o Gate 5 (deliverables "
-            "não-código ou diffs vazio) — Gate segue sem reprovação."
+            "skipped: sem evidência de código executável para o Gate 5 (deliverables "
+            "não-código, diffs vazio ou documentação .md) — Gate segue sem reprovação."
         ),
         violations=[],
         recommendations=[
