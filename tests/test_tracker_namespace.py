@@ -17,6 +17,7 @@ def test_parse_spec_reference_with_namespace() -> None:
         "SPEC-005",
     ), "referência com namespace deve ser separada"
 
+
 def test_parse_spec_reference_without_namespace() -> None:
     """Business Rule: spec_id solto parseia namespace vazio (comportamento legado)."""
     assert parse_spec_reference("SPEC-005") == ("", "SPEC-005")

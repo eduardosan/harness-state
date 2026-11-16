@@ -218,9 +218,11 @@ def is_ignored_by_git(file_path: Path, root_dir: Path) -> bool:
             dir_name = clean_rule.rstrip("/")
             if dir_name in rel_path.parts:
                 return True
-        elif fnmatch.fnmatch(path_str, clean_rule) or fnmatch.fnmatch(
-            file_name, clean_rule
-        ) or (clean_rule.startswith("*") and fnmatch.fnmatch(file_name, clean_rule)):
+        elif (
+            fnmatch.fnmatch(path_str, clean_rule)
+            or fnmatch.fnmatch(file_name, clean_rule)
+            or (clean_rule.startswith("*") and fnmatch.fnmatch(file_name, clean_rule))
+        ):
             return True
 
     return False

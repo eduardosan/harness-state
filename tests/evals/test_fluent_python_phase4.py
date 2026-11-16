@@ -34,6 +34,7 @@ PHASE4_SPECS = [
     "SPEC-PY-13-dynamic-attributes-and-metaprogramming.md",
 ]
 
+
 @pytest.mark.parametrize("spec_filename", PHASE4_SPECS)
 def test_phase4_spec_files_exist_and_follow_template(spec_filename: str) -> None:
     """Business Rule: specs da Fase 4 devem existir e seguir o molde canonico.
@@ -56,31 +57,29 @@ def test_phase4_spec_files_exist_and_follow_template(spec_filename: str) -> None
 
 RULE_CASES: list[tuple[str, str, str]] = [
     (
-        'In async code never block the event loop (no time.sleep or blocking file I/O in coroutines); use asyncio.TaskGroup and explicit asyncio.timeout for fan-out.',
-        'import asyncio\n\n\nasync def fetch_all(urls):\n    async with asyncio.timeout(10), asyncio.TaskGroup() as tg:\n        tasks = [tg.create_task(fetch(u)) for u in urls]\n    return [t.result() for t in tasks]\n',
-        'import time\n\n\nasync def fetch_all(urls):\n    return [fetch(u) and time.sleep(0.5) for u in urls]\n',
+        "In async code never block the event loop (no time.sleep or blocking file I/O in coroutines); use asyncio.TaskGroup and explicit asyncio.timeout for fan-out.",
+        "import asyncio\n\n\nasync def fetch_all(urls):\n    async with asyncio.timeout(10), asyncio.TaskGroup() as tg:\n        tasks = [tg.create_task(fetch(u)) for u in urls]\n    return [t.result() for t in tasks]\n",
+        "import time\n\n\nasync def fetch_all(urls):\n    return [fetch(u) and time.sleep(0.5) for u in urls]\n",
     ),
     (
-        'Choose the concurrency model by the bottleneck: ProcessPoolExecutor for CPU-bound work, asyncio/threads for I/O-bound work.',
-        'from concurrent.futures import ProcessPoolExecutor\n\n\ndef hash_all(paths):\n    with ProcessPoolExecutor(max_workers=4) as pool:\n        return list(pool.map(hash_file, paths))\n',
-        'from concurrent.futures import ThreadPoolExecutor\n\n\ndef hash_all(paths):\n    with ThreadPoolExecutor(max_workers=4) as pool:\n        return list(pool.map(hash_file, paths))\n',
+        "Choose the concurrency model by the bottleneck: ProcessPoolExecutor for CPU-bound work, asyncio/threads for I/O-bound work.",
+        "from concurrent.futures import ProcessPoolExecutor\n\n\ndef hash_all(paths):\n    with ProcessPoolExecutor(max_workers=4) as pool:\n        return list(pool.map(hash_file, paths))\n",
+        "from concurrent.futures import ThreadPoolExecutor\n\n\ndef hash_all(paths):\n    with ThreadPoolExecutor(max_workers=4) as pool:\n        return list(pool.map(hash_file, paths))\n",
     ),
     (
-        'Repeated attribute validation must use a reusable descriptor with __set_name__ plus @property, not procedural get_/set_ pairs.',
+        "Repeated attribute validation must use a reusable descriptor with __set_name__ plus @property, not procedural get_/set_ pairs.",
         "class Positive:\n    def __set_name__(self, owner, name):\n        self.public = name\n        self.private = f'_{name}'\n\n    def __get__(self, obj, objtype=None):\n        return getattr(obj, self.private, None)\n\n    def __set__(self, obj, value):\n        if value <= 0:\n            raise ValueError('must be positive')\n        setattr(obj, self.private, value)\n\n\nclass Connection:\n    port = Positive()\n\n    def __init__(self, port: int) -> None:\n        self.port = port\n\n    @property\n    def label(self) -> str:\n        return f'connection:{self.port}'\n",
-        'class Connection:\n    def get_port(self):\n        return self._port\n\n    def set_port(self, value):\n        self._port = value\n',
+        "class Connection:\n    def get_port(self):\n        return self._port\n\n    def set_port(self, value):\n        self._port = value\n",
     ),
     (
-        'Follow the metaprogramming hierarchy (class decorator -> __init_subclass__ -> metaclass), preferring __init_subclass__ over a custom metaclass for simple registration.',
+        "Follow the metaprogramming hierarchy (class decorator -> __init_subclass__ -> metaclass), preferring __init_subclass__ over a custom metaclass for simple registration.",
         "class Plugin:\n    registry: dict[str, type] = {}\n\n    def __init_subclass__(cls, slug: str, **kwargs) -> None:\n        super().__init_subclass__(**kwargs)\n        Plugin.registry[slug] = cls\n\n\nclass CsvExport(Plugin, slug='csv'):\n    pass\n",
         "class PluginMeta(type):\n    registry = {}\n\n    def __new__(mcls, name, bases, ns, slug=None):\n        cls = super().__new__(mcls, name, bases, ns)\n        if slug:\n            mcls.registry[slug] = cls\n        return cls\n\n\nclass Plugin(metaclass=PluginMeta):\n    pass\n\n\nclass CsvExport(Plugin, slug='csv'):\n    pass\n",
     ),
 ]
 
 
-def build_single_rule_metric(
-    model: OpenAIModel, rule: str, name: str
-) -> GEval:
+def build_single_rule_metric(model: OpenAIModel, rule: str, name: str) -> GEval:
     """Cria uma GEval de regra única para avaliar conformidade pontual.
 
     Multiplas regras em uma só criteria induzem juizes 7B a pontuarem
@@ -99,8 +98,9 @@ def build_single_rule_metric(
         name=name,
         criteria=(
             "Assess the code against exactly ONE guideline, stated below. "
-            "Guideline: " + rule +
-            " Judge only compliance with this guideline. The size or "
+            "Guideline: "
+            + rule
+            + " Judge only compliance with this guideline. The size or "
             "structure of the code is irrelevant: a snippet may contain "
             "any number of functions and classes."
         ),
@@ -133,7 +133,6 @@ def build_phase4_metric(model: OpenAIModel) -> GEval:
         RULE_CASES[0][0],
         "Fluent Python Phase 4 Rule 1",
     )
-
 
 
 def test_phase4_metric_factory_uses_single_rule_and_strict_threshold() -> None:
@@ -182,8 +181,5 @@ def test_phase4_real_llm_forced_choice_discriminates_each_rule() -> None:
             votes.append((100 if ok else 0, ok, raw.strip()[:60]))
         score, success, reason = aggregate_functional_votes(votes)
         if not success:
-            failures.append(
-                f"{name}: esperado={choice} votos={reason} "
-                f"(score={score})"
-            )
+            failures.append(f"{name}: esperado={choice} votos={reason} (score={score})")
     assert not failures, "escolha forçada falhou:\n" + "\n".join(failures)

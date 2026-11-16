@@ -33,7 +33,9 @@ def test_load_plugins_registers_commands(
             click.Command("bug-suite", help="Comandos privados do flywheel")
         )
 
-    fake_ep: Any = type("EP", (), {"name": "flywheel", "load": lambda self: register_plugin})()
+    fake_ep: Any = type(
+        "EP", (), {"name": "flywheel", "load": lambda self: register_plugin}
+    )()
     monkeypatch.setattr(cli_module, "list_available_plugins", lambda: [fake_ep])
 
     fresh = click.Group("main")
@@ -80,7 +82,10 @@ def test_load_plugins_tolerates_broken_plugin(
     ok_ep: Any = type(
         "EP2",
         (),
-        {"name": "ok", "load": lambda self: lambda g: g.add_command(click.Command("ok-cmd"))},
+        {
+            "name": "ok",
+            "load": lambda self: lambda g: g.add_command(click.Command("ok-cmd")),
+        },
     )()
     monkeypatch.setattr(cli_module, "list_available_plugins", lambda: [fake_ep, ok_ep])
 

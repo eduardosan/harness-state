@@ -60,12 +60,16 @@ def test_spec_domain_completion_status() -> None:
     assert not spec.is_complete
     assert len(spec.pending_tasks) == 2
 
-    spec.update_task_status("task-1", TaskState.READY, worker_id="worker-1", pr_number=10)
+    spec.update_task_status(
+        "task-1", TaskState.READY, worker_id="worker-1", pr_number=10
+    )
     assert not spec.is_complete
     assert spec.status == TaskState.IN_PROGRESS
     assert len(spec.pending_tasks) == 1
 
-    spec.update_task_status("task-2", TaskState.APPROVED, worker_id="worker-2", pr_number=11)
+    spec.update_task_status(
+        "task-2", TaskState.APPROVED, worker_id="worker-2", pr_number=11
+    )
     assert spec.is_complete
     assert spec.status == TaskState.READY
     assert len(spec.pending_tasks) == 0

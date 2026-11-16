@@ -413,9 +413,7 @@ def compute_regressed_keys(
         return None
 
     try:
-        diff_entries = module.compute_diff(
-            file_results, diff_ref, str(resolved_root)
-        )
+        diff_entries = module.compute_diff(file_results, diff_ref, str(resolved_root))
     except ValueError:
         return None
 

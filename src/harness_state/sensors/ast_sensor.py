@@ -86,7 +86,11 @@ def is_wraps_decorator(decorator: ast.expr) -> bool:
     if isinstance(func, ast.Name):
         return func.id == "wraps"
     if isinstance(func, ast.Attribute):
-        return func.attr == "wraps" and isinstance(func.value, ast.Name) and func.value.id == "functools"
+        return (
+            func.attr == "wraps"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "functools"
+        )
     return False
 
 
@@ -337,11 +341,7 @@ def check_source(source: str) -> list[Violation]:
             if private_prefixed(node.name) and not in_class:
                 violations.append(pyf007_violation(node.lineno, node.col_offset))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if (
-                private_prefixed(node.target.id)
-                and not in_class
-                and not in_function
-            ):
+            if private_prefixed(node.target.id) and not in_class and not in_function:
                 violations.append(pyf007_violation(node.lineno, node.col_offset))
         elif isinstance(node, ast.Assign):
             for target in node.targets:

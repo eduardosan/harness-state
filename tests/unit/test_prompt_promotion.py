@@ -62,9 +62,7 @@ def test_promote_prompts_is_atomic_on_first_error() -> None:
     with patch(
         "harness_state.prompt_manager.LangfusePromptManager", return_value=mock_mgr
     ):
-        outcome = promote_prompts_to_production(
-            ["paralax/broken", "paralax/ok"]
-        )
+        outcome = promote_prompts_to_production(["paralax/broken", "paralax/ok"])
 
     assert outcome.blocked is True
     assert len(outcome.errors) == 1
@@ -95,9 +93,7 @@ def test_promote_prompts_atomic_when_later_prompt_fails() -> None:
 
 def test_promote_prompts_empty_list_is_noop() -> None:
     """Business Rule: lista vazia não instancia o gerenciador nem promove nada."""
-    with patch(
-        "harness_state.prompt_manager.LangfusePromptManager"
-    ) as mock_cls:
+    with patch("harness_state.prompt_manager.LangfusePromptManager") as mock_cls:
         outcome = promote_prompts_to_production([])
 
     assert outcome.promoted == []

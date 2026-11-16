@@ -72,8 +72,6 @@ class FlakyRedisFactory:
         return MagicMock()
 
 
-
-
 def test_compile_bug_issue_markdown_structure() -> None:
     """Business Rule: A compilação deve conter as seções obrigatórias da SSOT."""
     plan = BugPlan(
@@ -117,8 +115,6 @@ def test_compile_bug_issue_markdown_structure() -> None:
     assert '"""Business Rule: Ao cancelar evento no Calendar' in markdown
 
 
-
-
 def test_parse_bug_issue_markdown_reconstitution() -> None:
     """Business Rule: O parse do markdown deve reconstruir fidedignamente o BugPlan."""
     plan = BugPlan(
@@ -154,8 +150,6 @@ def test_parse_bug_issue_markdown_reconstitution() -> None:
     assert parsed_plan.intake_prompt == plan.intake_prompt
 
 
-
-
 def test_compile_and_parse_bug_issue_markdown_with_prompts() -> None:
     """Business Rule: Serializa e reconstrói prompts de IA afetados sob governança."""
     plan = BugPlan(
@@ -178,8 +172,6 @@ def test_compile_and_parse_bug_issue_markdown_with_prompts() -> None:
 
     parsed = parse_bug_issue_markdown(markdown)
     assert parsed.prompts == ["vehicles/vehicle_search_agent_instruction"]
-
-
 
 
 def test_generate_test_file_from_plan_creates_failing_test(
@@ -217,8 +209,6 @@ def test_generate_test_file_from_plan_creates_failing_test(
     assert expected_assert in content
 
 
-
-
 def test_generate_test_file_from_plan_preserves_existing_file(
     tmp_path: Path,
 ) -> None:
@@ -245,8 +235,6 @@ def test_generate_test_file_from_plan_preserves_existing_file(
     assert test_file.read_text(encoding="utf-8") == custom_content
 
 
-
-
 def test_load_cloud_environment_config_from_manifest(tmp_path: Path) -> None:
     """Business Rule: Deve extrair as configurações de nuvem a partir do manifest."""
     manifest_content = (
@@ -271,8 +259,6 @@ def test_load_cloud_environment_config_from_manifest(tmp_path: Path) -> None:
     assert config["kubernetes"]["cluster_name"] == "prod-gke-cluster"
 
 
-
-
 def test_load_cloud_env_config_missing_environment_raises(
     tmp_path: Path,
 ) -> None:
@@ -287,8 +273,6 @@ def test_load_cloud_env_config_missing_environment_raises(
         load_cloud_environment_config(manifest_file, environment="production")
 
     assert "não declarado em cloud_environments" in str(exc_info.value)
-
-
 
 
 def test_build_gcloud_logging_command_with_relative_since() -> None:
@@ -320,8 +304,6 @@ def test_build_gcloud_logging_command_with_relative_since() -> None:
     assert "--format=json" in cmd_string
 
 
-
-
 def test_build_gcloud_logging_command_with_absolute_time_range() -> None:
     """Business Rule: Consulta com intervalo absoluto deve combinar start e end."""
     cloud_config = {
@@ -350,8 +332,6 @@ def test_build_gcloud_logging_command_with_absolute_time_range() -> None:
     assert "severity>=WARNING" in cmd_string
 
 
-
-
 def test_resolve_most_probable_spoke_exact_and_substring() -> None:
     """Business Rule: Normalizar correspondências exatas e parciais de spokes."""
     repos = [
@@ -369,8 +349,6 @@ def test_resolve_most_probable_spoke_exact_and_substring() -> None:
     )
     assert resolve_most_probable_spoke("vehicles", repos) == "customer-support-vehicles"
     assert resolve_most_probable_spoke("unknown", repos) == "unknown"
-
-
 
 
 def test_infer_spoke_from_prompt_heuristic() -> None:
@@ -395,8 +373,6 @@ def test_infer_spoke_from_prompt_heuristic() -> None:
     assert infer_spoke_from_prompt_heuristic(prompt_generic, repos) == "unknown"
 
 
-
-
 def test_load_bug_plan_target_from_file(tmp_path: Path) -> None:
     """Business Rule: Deve carregar o BugPlan a partir de arquivo explícito."""
     plan = BugPlan(
@@ -417,8 +393,6 @@ def test_load_bug_plan_target_from_file(tmp_path: Path) -> None:
     assert loaded_plan.title == "[Bug] Erro no Checkout"
     assert loaded_plan.affected_spoke == "evo-ai-crm-community"
     assert loaded_path == md_file
-
-
 
 
 def test_load_bug_plan_target_default_bug_issue(tmp_path: Path) -> None:
@@ -442,14 +416,10 @@ def test_load_bug_plan_target_default_bug_issue(tmp_path: Path) -> None:
     assert loaded_path == default_file
 
 
-
-
 def test_load_bug_plan_target_not_found_raises(tmp_path: Path) -> None:
     """Business Rule: Deve lançar FileNotFoundError se nenhum plano for localizado."""
     with pytest.raises(FileNotFoundError, match="Nenhum plano de defeito encontrado"):
         load_bug_plan_target(target=None, workspace_root=tmp_path)
-
-
 
 
 def test_resolve_spoke_directory(tmp_path: Path) -> None:
@@ -468,8 +438,6 @@ def test_resolve_spoke_directory(tmp_path: Path) -> None:
         workspace_root=tmp_path,
     )
     assert unknown_resolved == tmp_path
-
-
 
 
 def test_build_bug_fix_prompt() -> None:
@@ -491,8 +459,6 @@ def test_build_bug_fix_prompt() -> None:
     assert "test_search_cars_by_brand" in prompt
     assert "NUNCA defina funções aninhadas" in prompt
     assert "Busca de veículos deve retornar lista vazia" in prompt
-
-
 
 
 def test_build_bug_fix_prompt_requires_rca_deliverable_and_issue_link() -> None:
@@ -525,8 +491,6 @@ def test_build_bug_fix_prompt_requires_rca_deliverable_and_issue_link() -> None:
     assert "Diagrama de Ishikawa" in prompt
     assert "5 Porquês" in prompt
     assert "Fixes #51" in prompt
-
-
 
 
 def test_agent_runner_retries_on_429() -> None:
@@ -562,8 +526,6 @@ def test_agent_runner_retries_on_429() -> None:
         assert mock_sleep.call_count == 1
 
 
-
-
 def test_resolve_github_repo_for_spoke() -> None:
     """Business Rule: Deve resolver o repo completo org/repo a partir do manifesto."""
     manifest_repos = [
@@ -582,8 +544,6 @@ def test_resolve_github_repo_for_spoke() -> None:
         == "paralax-ia/meu-spoke"
     )
     assert resolve_github_repo_for_spoke("owner/custom-repo") == "owner/custom-repo"
-
-
 
 
 def test_create_github_bug_issue_success() -> None:
@@ -613,8 +573,6 @@ def test_create_github_bug_issue_success() -> None:
         assert plan.issue_id == 42
 
 
-
-
 def test_update_github_bug_issue() -> None:
     """Business Rule: Deve atualizar o título e o corpo da issue via gh issue edit."""
     plan = BugPlan(
@@ -642,8 +600,6 @@ def test_update_github_bug_issue() -> None:
         assert "[Bug] Título Atualizado" in cmd
 
 
-
-
 def test_refine_bug_plan_with_llm() -> None:
     """Business Rule: Refinamento com LLM deve incorporar as orientações do usuário."""
     initial_plan = BugPlan(
@@ -669,7 +625,9 @@ def test_refine_bug_plan_with_llm() -> None:
         "test_function_name": "test_search_by_year",
         "business_rule": "Filtros válidos devem retornar registros correspondentes.",
     }
-    with patch("harness_state.bug.call_llm_json_completion", return_value=fake_refined_data):
+    with patch(
+        "harness_state.bug.call_llm_json_completion", return_value=fake_refined_data
+    ):
         refined = refine_bug_plan_with_llm(
             current_plan=initial_plan,
             refinement_instruction="adicionar filtro por ano e marca",
@@ -678,8 +636,6 @@ def test_refine_bug_plan_with_llm() -> None:
         assert refined.title == "[Bug] Erro 500 na busca de carros por ano e marca"
         assert "NullPointerException" in refined.summary
         assert refined.issue_id == 77
-
-
 
 
 def test_resolve_container_name_for_spoke() -> None:
@@ -693,8 +649,6 @@ def test_resolve_container_name_for_spoke() -> None:
         == "prod-paralax-calendar"
     )
     assert resolve_container_name_for_spoke("custom-app") == "custom-app"
-
-
 
 
 def test_compile_bug_issue_markdown_prevents_duplicate_business_rule() -> None:
@@ -721,15 +675,11 @@ def test_compile_bug_issue_markdown_prevents_duplicate_business_rule() -> None:
     assert expected_docstring in md
 
 
-
-
 def test_resolve_flow_containers_for_spoke() -> None:
     """Business Rule: O fluxo de qualquer agente deve incluir o evo-bot-runtime."""
     containers = resolve_flow_containers_for_spoke("customer-support-vehicles")
     assert "prod-customer-support-v2-vehicles" in containers
     assert "evo-bot-runtime" in containers
-
-
 
 
 def test_interactive_fetch_cloud_logs_auto_found() -> None:
@@ -747,8 +697,6 @@ def test_interactive_fetch_cloud_logs_auto_found() -> None:
             prompt_fn=lambda _: pytest.fail("Nenhuma pergunta deveria ser feita"),
         )
         assert res == fake_json
-
-
 
 
 def test_interactive_fetch_cloud_logs_needs_more_info_and_llm_mapping() -> None:
@@ -774,7 +722,9 @@ def test_interactive_fetch_cloud_logs_needs_more_info_and_llm_mapping() -> None:
     }
 
     with (
-        patch("harness_state.bug.subprocess.run", side_effect=[empty_proc, success_proc]),
+        patch(
+            "harness_state.bug.subprocess.run", side_effect=[empty_proc, success_proc]
+        ),
         patch("harness_state.bug.call_llm_json_completion", return_value=mock_llm_data),
     ):
         res = interactive_fetch_cloud_logs(
@@ -782,8 +732,6 @@ def test_interactive_fetch_cloud_logs_needs_more_info_and_llm_mapping() -> None:
             prompt_fn=lambda _: responses.pop(0),
         )
         assert res == found_json
-
-
 
 
 def test_extract_log_query_context_with_llm_fallback() -> None:
@@ -796,8 +744,6 @@ def test_extract_log_query_context_with_llm_fallback() -> None:
         )
         assert "evo-crm" in ctx["containers"]
         assert ctx["since"] == "6h"
-
-
 
 
 def test_refine_bug_plan_with_llm_incorporates_cloud_log() -> None:
@@ -825,8 +771,6 @@ def test_refine_bug_plan_with_llm_incorporates_cloud_log() -> None:
             agent=None,
         )
         assert refined.selected_cloud_log == fake_log
-
-
 
 
 def test_agent_runner_prompt_file_resolution(tmp_path: Path) -> None:
@@ -859,8 +803,6 @@ def test_agent_runner_prompt_file_resolution(tmp_path: Path) -> None:
     assert resolved_path.is_absolute()
     assert resolved_path.name == "current_task_prompt.md"
     assert resolved_path.is_file()
-
-
 
 
 def test_agent_runner_continue_session_flags(tmp_path: Path) -> None:
@@ -904,8 +846,6 @@ def test_agent_runner_continue_session_flags(tmp_path: Path) -> None:
     assert "--no-show-model-warnings" in aider_cmd
 
 
-
-
 def test_record_bug_state_in_redis_persists_payload() -> None:
     """Business Rule: O estado transacional do defeito deve ser salvo no Redis."""
     plan = BugPlan(
@@ -940,8 +880,6 @@ def test_record_bug_state_in_redis_persists_payload() -> None:
         assert mock_client.sadd.call_args[0][0] == "bugs:active"
 
 
-
-
 def test_record_bug_state_in_redis_closed_stage_archives() -> None:
     """Business Rule: No estado CLOSED o bug deve ser removido de active e arquivado."""
     plan = BugPlan(
@@ -971,8 +909,6 @@ def test_record_bug_state_in_redis_closed_stage_archives() -> None:
         mock_client.sadd.assert_called_once_with(
             "bugs:archived", "bug:customer-support-vehicles:24"
         )
-
-
 
 
 def test_send_bug_telemetry_to_es_posts_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1009,8 +945,6 @@ def test_send_bug_telemetry_to_es_posts_json(monkeypatch: pytest.MonkeyPatch) ->
         assert payload["event_type"] == "bug_lifecycle"
 
 
-
-
 def test_publish_bug_pr_detects_existing_pr(tmp_path: Path) -> None:
     """Business Rule: publish_bug_pr detecta PR existente se já aberto pelo agente."""
     plan = BugPlan(
@@ -1040,8 +974,6 @@ def test_publish_bug_pr_detects_existing_pr(tmp_path: Path) -> None:
         assert num == 38
         assert "pull/38" in (url or "")
         assert "já ativo" in msg
-
-
 
 
 def test_publish_bug_pr_links_issue_on_existing_pr_without_reference(
@@ -1085,8 +1017,6 @@ def test_publish_bug_pr_links_issue_on_existing_pr_without_reference(
     assert "Fixes #51" in new_body
 
 
-
-
 def test_merge_bug_pr_and_close_issue(tmp_path: Path) -> None:
     """Business Rule: merge_bug_pr mescla PR, fecha Issue e atualiza Redis e ES."""
     plan = BugPlan(
@@ -1107,7 +1037,9 @@ def test_merge_bug_pr_and_close_issue(tmp_path: Path) -> None:
         patch(
             "harness_state.bug.record_bug_state_in_redis", return_value=True
         ) as mock_redis,
-        patch("harness_state.bug.send_bug_telemetry_to_es", return_value=True) as mock_es,
+        patch(
+            "harness_state.bug.send_bug_telemetry_to_es", return_value=True
+        ) as mock_es,
     ):
         ok, msg = merge_bug_pr_and_close_issue(
             repo_dir=tmp_path, plan=plan, pr_number=38
@@ -1116,8 +1048,6 @@ def test_merge_bug_pr_and_close_issue(tmp_path: Path) -> None:
         assert "mesclado" in msg
         assert mock_redis.call_args[1]["stage"] == "CLOSED"
         assert mock_es.call_args[1]["stage"] == "CLOSED"
-
-
 
 
 def test_update_github_issue_status_label() -> None:
@@ -1144,8 +1074,6 @@ def test_update_github_issue_status_label() -> None:
         assert "status:bug/resolved" in cmd
         assert "--remove-label" in cmd
         assert "status:bug/fixing" in cmd
-
-
 
 
 def test_update_github_issue_status_label_with_target_repo() -> None:
@@ -1177,8 +1105,6 @@ def test_update_github_issue_status_label_with_target_repo() -> None:
         assert "status:bug/resolved" in cmd
 
 
-
-
 def test_load_bug_plan_target_with_explicit_repo() -> None:
     """Business Rule: Deve buscar issue no GitHub usando repo explícito."""
     plan_body = """<!-- flywheel:bug-plan:v1 -->
@@ -1206,8 +1132,6 @@ Falha ao validar prompts
         assert "paralax-ia/customer-support-vehicles" in cmd
 
 
-
-
 def test_record_bug_state_in_redis_retries_on_timeout() -> None:
     """Business Rule: Deve retentar persistência no Redis em caso de falha."""
     plan = BugPlan(
@@ -1230,8 +1154,6 @@ def test_record_bug_state_in_redis_retries_on_timeout() -> None:
         assert success is True
         assert mock_redis_factory.attempts == 3
         assert mock_sleep.call_count == 2
-
-
 
 
 def test_elicit_bug_plan_with_agent_starts_new_session() -> None:
@@ -1269,8 +1191,6 @@ def test_elicit_bug_plan_with_agent_starts_new_session() -> None:
         assert plan.title == "[Bug] Nova falha"
         assert mock_run_prompt.call_count == 1
         assert mock_run_prompt.call_args[1]["continue_session"] is False
-
-
 
 
 def test_ensure_state_backends_available_reports_both_failures(
@@ -1315,8 +1235,6 @@ def test_ensure_state_backends_available_passes_when_both_reachable(
         ensure_state_backends_available()
 
 
-
-
 def test_build_bug_feedback_prompt() -> None:
     """Business Rule: Prompt de feedback traz diagnóstico das falhas."""
     plan = BugPlan(
@@ -1345,8 +1263,6 @@ def test_build_bug_feedback_prompt() -> None:
     assert "issue `55`" in prompt
 
 
-
-
 def test_pull_prompts_from_langfuse_ssot_empty_target_prompts_does_not_pull(
     tmp_path: Path,
 ) -> None:
@@ -1361,8 +1277,6 @@ def test_pull_prompts_from_langfuse_ssot_empty_target_prompts_does_not_pull(
     )
     assert pulled == []
     mock_mgr.fetch_prompt.assert_not_called()
-
-
 
 
 def test_bug_plan_topological_waves_and_origin_spoke_serialization() -> None:
@@ -1390,8 +1304,6 @@ def test_bug_plan_topological_waves_and_origin_spoke_serialization() -> None:
     assert parsed.origin_spoke == "customer-support-vehicles"
     assert parsed.wave == 2
     assert parsed.depends_on == ["paralax-evo-crm", "paralax-agents-common"]
-
-
 
 
 def test_publish_bug_pr_creates_agent_branch_prefix(tmp_path: Path) -> None:
@@ -1446,8 +1358,6 @@ def test_publish_bug_pr_creates_agent_branch_prefix(tmp_path: Path) -> None:
         assert pr_url == "https://github.com/paralax-ia/paralax-evo-crm/pull/101"
 
 
-
-
 def test_resolve_spoke_wave_and_dependencies_from_manifest(tmp_path: Path) -> None:
     """Business Rule: Ondas e dependências lidas de manifest.yaml sem gravar spec."""
     manifest_content = """version: "1.0"
@@ -1485,8 +1395,6 @@ repositories:
     )
     assert wave_consumer == 3
     assert deps_consumer == ["paralax-evo-crm", "paralax-agents-common"]
-
-
 
 
 def test_ensure_bug_plan_has_prompts_auto_discovers_for_ai_agent(
@@ -1529,8 +1437,6 @@ def test_ensure_bug_plan_has_prompts_auto_discovers_for_ai_agent(
     assert plan.prompts == prompts
 
 
-
-
 def test_elicit_bug_plan_with_llm_preserves_and_extracts_prompts() -> None:
     """Business Rule: 'elicit_bug_plan_with_llm' extrai 'prompts' do JSON do modelo."""
     from harness_state.bug import elicit_bug_plan_with_llm
@@ -1556,8 +1462,6 @@ def test_elicit_bug_plan_with_llm_preserves_and_extracts_prompts() -> None:
             agent=None,
         )
     assert plan.prompts == ["vehicles/vehicle_search_agent_instruction"]
-
-
 
 
 def test_refine_bug_plan_with_llm_preserves_existing_prompts() -> None:
@@ -1596,8 +1500,6 @@ def test_refine_bug_plan_with_llm_preserves_existing_prompts() -> None:
     assert refined.prompts == ["vehicles/vehicle_search_agent_instruction"]
 
 
-
-
 def test_prompt_sensor_validate_accepts_dict_prompts(tmp_path: Path) -> None:
     """Business Rule: 'PromptGovernanceSensor.validate' suporta metadados."""
     from harness_state.sensors.prompt_sensor import PromptGovernanceSensor
@@ -1624,4 +1526,3 @@ def test_prompt_sensor_validate_accepts_dict_prompts(tmp_path: Path) -> None:
     mock_mgr.fetch_prompt.assert_called_once_with(
         "vehicles/vehicle_search_agent_instruction"
     )
-

@@ -55,8 +55,8 @@ def test_repos_versionados_nao_contem_ips_u_hosts_reais_de_infra() -> None:
             if pattern.search(content):
                 rel = path.relative_to(path.parents[2])
                 offenders.append(f"{rel}: {pattern.pattern}")
-    assert offenders == [], (
-        "valores reais vazaram no repo público:\n" + "\n".join(offenders)
+    assert offenders == [], "valores reais vazaram no repo público:\n" + "\n".join(
+        offenders
     )
 
 

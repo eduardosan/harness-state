@@ -149,13 +149,9 @@ class PromptGovernanceSensor:
         changed_files = self.get_changed_files()
         prompt_files = detect_prompt_files_in_diff(changed_files)
 
-        repo_prompts = filter_prompts_for_repo(
-            declared_prompts, self.project_root.name
-        )
+        repo_prompts = filter_prompts_for_repo(declared_prompts, self.project_root.name)
         normalized_prompts = [
-            p["name"] if isinstance(p, dict) else str(p)
-            for p in repo_prompts
-            if p
+            p["name"] if isinstance(p, dict) else str(p) for p in repo_prompts if p
         ]
 
         if prompt_files and not normalized_prompts:
@@ -174,10 +170,7 @@ class PromptGovernanceSensor:
                     )
                 )
 
-        if (
-            normalized_prompts
-            and self.prompt_manager.is_configured
-        ):
+        if normalized_prompts and self.prompt_manager.is_configured:
             for prompt_name in normalized_prompts:
                 self._check_langfuse_draft(prompt_name, violations)
 
@@ -225,9 +218,7 @@ def is_prompt_file(file_path_str: str) -> bool:
     parts = set(normalized.split("/"))
     if parts & IGNORED_PROMPT_PARTS:
         return False
-    if (
-        normalized.endswith(("current_task_prompt.md", "task_prompt.md"))
-    ):
+    if normalized.endswith(("current_task_prompt.md", "task_prompt.md")):
         return False
     for pattern in PROMPT_FILE_PATTERNS:
         if pattern.search(normalized):
@@ -390,9 +381,7 @@ def prompt_belongs_to_repo(p: Any, repo_name: str, clean_repo: str) -> bool:
 
 def filter_prompts_for_repo(prompts: list[Any], repo_name: str) -> list[Any]:
     """Filtra prompts declarados mantendo apenas os atribuídos ao repositório alvo."""
-    has_target_repo = any(
-        isinstance(p, dict) and p.get("target_repo") for p in prompts
-    )
+    has_target_repo = any(isinstance(p, dict) and p.get("target_repo") for p in prompts)
     if not has_target_repo:
         return list(prompts)
 
@@ -486,7 +475,7 @@ def sync_modified_prompts_as_draft(
 ) -> list[tuple[str, int]]:
     """Sincroniza arquivos de prompt modificados como novas versões draft no Langfuse."""
     manager = prompt_manager
-    if not manager or not getattr(manager, 'is_configured', False):
+    if not manager or not getattr(manager, "is_configured", False):
         return []
 
     sensor = PromptGovernanceSensor(project_root=project_root, prompt_manager=manager)

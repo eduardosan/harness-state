@@ -111,7 +111,6 @@ def get_known_agent_config(agent_id: str) -> AgentConfig | None:
     return KNOWN_AGENTS.get(agent_id.lower())
 
 
-
 def normalize_opencode_model(model: str) -> str:
     """Qualifica o modelo no formato `provider/model` exigido pelo opencode.
 
@@ -942,6 +941,7 @@ def get_agent_output_parser(agent: DetectedAgent) -> BaseAgentOutputParser:
     if agent.id in ("aider", "aider-ollama"):
         return AiderOutputParser(agent_name=agent.name)
     return DefaultAgentOutputParser(agent_name=agent.name)
+
 
 class AgentRunner:
     """Executor que aciona o agente de IA escolhido para implementar a tarefa."""

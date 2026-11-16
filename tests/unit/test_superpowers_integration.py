@@ -31,9 +31,7 @@ def test_install_module_harness_ci_mode_keeps_agent_context(tmp_path: Path) -> N
     assert ".claude/skills/tdd-workflow/SKILL.md" in installed
     agents_md = tmp_path / "AGENTS.md"
     assert agents_md.is_file()
-    assert "<!-- SUPERPOWERS-HARNESS:START -->" in agents_md.read_text(
-        encoding="utf-8"
-    )
+    assert "<!-- SUPERPOWERS-HARNESS:START -->" in agents_md.read_text(encoding="utf-8")
 
 
 def test_detect_project_language_detection_matrix(tmp_path: Path) -> None:
@@ -251,8 +249,7 @@ def test_instalada_federated_sdd_e_copia_fiel_do_catalogo() -> None:
     """
     repo_root = Path(__file__).resolve().parents[2]
     catalog = (
-        repo_root
-        / "src/harness_state/catalog/skills/common/federated-sdd/SKILL.md"
+        repo_root / "src/harness_state/catalog/skills/common/federated-sdd/SKILL.md"
     ).read_text(encoding="utf-8")
     installed = (repo_root / ".claude/skills/federated-sdd/SKILL.md").read_text(
         encoding="utf-8"
@@ -285,9 +282,7 @@ def test_cache_dir_env_canonica_com_patrocinio_da_legada(monkeypatch) -> None:
     """
     from harness_state.superpowers import get_default_superpowers_cache_dir
 
-    monkeypatch.setenv(
-        "HARNESS_SUPERPOWERS_CACHE_DIR", "/cache/canonico"
-    )
+    monkeypatch.setenv("HARNESS_SUPERPOWERS_CACHE_DIR", "/cache/canonico")
     monkeypatch.setenv("FLYWHEEL_SUPERPOWERS_CACHE_DIR", "/cache/legada")
     assert get_default_superpowers_cache_dir() == Path("/cache/canonico")
 

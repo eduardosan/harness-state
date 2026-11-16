@@ -85,7 +85,6 @@ class SubTask(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-
 class SpecRun(BaseModel):
     """Estado global de uma especificação no barramento central."""
 
@@ -155,12 +154,17 @@ class SpecRun(BaseModel):
         """Indica se todas as tarefas foram finalizadas com sucesso (READY ou APPROVED)."""
         if not self.tasks:
             return False
-        return all(task.status in (TaskState.READY, TaskState.APPROVED) for task in self.tasks.values())
+        return all(
+            task.status in (TaskState.READY, TaskState.APPROVED)
+            for task in self.tasks.values()
+        )
 
     @property
     def pending_tasks(self) -> list[SubTask]:
         """Retorna a lista de subtarefas ainda pendentes de execução."""
-        return [task for task in self.tasks.values() if task.status == TaskState.PENDING]
+        return [
+            task for task in self.tasks.values() if task.status == TaskState.PENDING
+        ]
 
     def get_next_unblocked_task(self) -> SubTask | None:
         """Retorna a próxima subtarefa cujas dependências de ondas já concluíram.

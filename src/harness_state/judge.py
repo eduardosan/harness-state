@@ -277,9 +277,7 @@ class FunctionalRuleBattery:
         passed = [v for v in verdicts if v[2]]
         self.score = len(passed) / len(verdicts)
         self._ok = len(passed) == len(verdicts)
-        failures = [
-            f"[{name}] {reason}" for name, _, ok, reason in verdicts if not ok
-        ]
+        failures = [f"[{name}] {reason}" for name, _, ok, reason in verdicts if not ok]
         self.reason = (
             "; ".join(failures)
             if failures
@@ -933,9 +931,7 @@ def aggregate_functional_votes(
     return median_score, is_success, reason
 
 
-def build_single_rule_metric(
-    model: OpenAIModel, rule: str, name: str
-) -> GEval:
+def build_single_rule_metric(model: OpenAIModel, rule: str, name: str) -> GEval:
     """Cria uma GEval de diretriz única, à prova de context-blooming em 7B.
 
     Evidência empírica dos previews: métricas amplas fazem modelos locais
@@ -1309,9 +1305,7 @@ def evaluate_spec_diff(
                 fluent_guidelines=fluent_guidelines,
             )
         except Exception as stage_error:
-            LOGGER.warning(
-                "Estagio do juiz falhou; tentando proximo tier"
-            )
+            LOGGER.warning("Estagio do juiz falhou; tentando proximo tier")
             LOGGER.debug("Detalhe da falha", exc_info=True)
             last_error = stage_error
             if stage_index < len(stages) - 1:
@@ -1423,22 +1417,24 @@ def evaluate_language_diff(
         last_error: Exception | None = None
         for stage_index, (stage_name, stage_model) in enumerate(stages):
             try:
-                fluent_score, fluent_success, fluent_reason = evaluate_fluent_python_stage(
-                    judge_model=stage_model,
-                    fluent_guidelines=fluent_guidelines,
-                    python_diff=python_diff,
+                fluent_score, fluent_success, fluent_reason = (
+                    evaluate_fluent_python_stage(
+                        judge_model=stage_model,
+                        fluent_guidelines=fluent_guidelines,
+                        python_diff=python_diff,
+                    )
                 )
                 is_approved = bool(fluent_success and fluent_score >= 90)
                 status = "APPROVED" if is_approved else "REJECTED"
                 violations = (
-                    []
-                    if is_approved
-                    else [f"[Python Fluente] {fluent_reason}"]
+                    [] if is_approved else [f"[Python Fluente] {fluent_reason}"]
                 )
                 recommendations = (
                     ["Implementacao atende integralmente as diretrizes da linguagem."]
                     if is_approved
-                    else ["Refatorar anti-padroes de Python conforme as specs ativadas."]
+                    else [
+                        "Refatorar anti-padroes de Python conforme as specs ativadas."
+                    ]
                 )
                 return JudgeEvaluation(
                     spec_id=effective_id,
@@ -1449,7 +1445,9 @@ def evaluate_language_diff(
                     recommendations=recommendations,
                 )
             except Exception as stage_error:
-                LOGGER.warning("Estagio do juiz de linguagem falhou; tentando proximo tier")
+                LOGGER.warning(
+                    "Estagio do juiz de linguagem falhou; tentando proximo tier"
+                )
                 LOGGER.debug("Detalhe da falha de linguagem", exc_info=True)
                 last_error = stage_error
                 if stage_index < len(stages) - 1:
@@ -1616,10 +1614,7 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=resolve_primary_judge_model(),
-        help=(
-            "Modelo LLM primario do juiz "
-            "(padrao: env LLM_JUDGE_MODEL)"
-        ),
+        help=("Modelo LLM primario do juiz (padrao: env LLM_JUDGE_MODEL)"),
     )
     parser.add_argument(
         "--fallback-model",

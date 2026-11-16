@@ -471,10 +471,7 @@ def resolve_spec_ecosystem(
     declared = str(frontmatter.get("ecosystem") or "")
     if declared:
         return declared
-    if (
-        manifest_path is not None
-        and manifest_path.parent.name.endswith("-spec-hub")
-    ):
+    if manifest_path is not None and manifest_path.parent.name.endswith("-spec-hub"):
         return derive_ecosystem_from_repo(manifest_path.parent.name)
     return ""
 

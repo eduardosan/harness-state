@@ -78,7 +78,9 @@ async def test_in_memory_store_context_manager() -> None:
 
 
 @pytest.mark.asyncio
-async def test_state_store_async_context_manager_close(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_state_store_async_context_manager_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Business Rule: StateStore deve garantir o fechamento seguro de conexões ativas com o Redis ao sair do contexto."""
     closed = False
 
@@ -186,4 +188,3 @@ def test_harness_state_re_exports_em_state_module() -> None:
     assert hs_state.parse_spec_reference is parse_spec_reference
     assert hs_state.redis_spec_key is redis_spec_key
     assert hs_state.derive_hub_ecosystem is derive_hub_ecosystem
-
