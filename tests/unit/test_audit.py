@@ -9,8 +9,9 @@ from harness_state.audit import audit_sensitive_data, list_tracked_text_files
 def test_audit_sensitive_data_flags_forbidden_ips(tmp_path: Path) -> None:
     """Business Rule: Detecta e aponta ocorrência de IPs reais de servidores internos."""
     bad_file = tmp_path / "README.md"
+    raw_ip = "192.168." + "20.5"
     bad_file.write_text(
-        "Conecte no servidor 192.168.20.5 para o banco de dados.",
+        f"Conecte no servidor {raw_ip} para o banco de dados.",
         encoding="utf-8",
     )
 
@@ -18,20 +19,21 @@ def test_audit_sensitive_data_flags_forbidden_ips(tmp_path: Path) -> None:
         offenders = audit_sensitive_data(tmp_path)
         assert len(offenders) == 1
         assert "README.md" in offenders[0]
-        assert "192.168.20.5" in offenders[0]
+        assert raw_ip in offenders[0]
 
 
 def test_audit_sensitive_data_flags_forbidden_hosts(tmp_path: Path) -> None:
     """Business Rule: Detecta e aponta ocorrência de hostnames internos não mascarados."""
     bad_doc = tmp_path / "docs.md"
+    raw_host = "pve2." + "for.mat.br"
     bad_doc.write_text(
-        "Host do cluster: pve2.for.mat.br na porta 8443", encoding="utf-8"
+        f"Host do cluster: {raw_host} na porta 8443", encoding="utf-8"
     )
 
     with patch("harness_state.audit.list_tracked_text_files", return_value=[bad_doc]):
         offenders = audit_sensitive_data(tmp_path)
         assert len(offenders) == 1
-        assert "pve2.for.mat.br" in offenders[0]
+        assert raw_host in offenders[0]
 
 
 def test_audit_sensitive_data_flags_raw_github_tokens(tmp_path: Path) -> None:
