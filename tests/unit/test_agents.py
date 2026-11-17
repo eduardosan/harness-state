@@ -833,3 +833,48 @@ def test_resolve_default_model_respeita_variaveis_de_ambiente() -> None:
     assert runner._resolve_default_model() == "ollama:qwen2.5-coder:14b"
 
 
+def test_agent_runner_executa_pydantic_coder(tmp_path: Path) -> None:
+    """Business Rule: AgentRunner deve despachar tarefas para o runtime pydantic-coder."""
+    runner = AgentRunner()
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    task = SubTask(id="task-coder-1", repo="test-repo", wave=1, branch="agent/task-coder-1")
+    spec_path = tmp_path / "SPEC-010.md"
+    spec_path.write_text("# Spec 010", encoding="utf-8")
+
+    code, output = runner.run(
+        agent=agent,
+        target_repo_dir=tmp_path,
+        task=task,
+        spec_path=spec_path,
+        feedback="",
+    )
+    assert code == 0
+    assert "pydantic" in output.lower() or "tarefa" in output.lower()
+
+
+def test_agent_runner_executa_prompt_pydantic_coder(tmp_path: Path) -> None:
+    """Business Rule: AgentRunner deve executar prompt arbitrário com pydantic-coder sem invocar subprocess."""
+    runner = AgentRunner()
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    code, output = runner.run_prompt(
+        agent=agent,
+        working_dir=tmp_path,
+        prompt_text="Resumo da tarefa",
+        task_label="teste",
+    )
+    assert code == 0
+    assert "PydanticCoderRunner" in output
+
+
+
+

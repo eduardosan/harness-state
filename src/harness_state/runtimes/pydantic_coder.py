@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from harness_state.agents import AgentRunner
 from harness_state.models import SubTask
 from harness_state.runtimes.coder_prompts import (
     CODER_SYSTEM_INSTRUCTION,
@@ -44,7 +43,7 @@ class PydanticCoderConfig:
 
 
 def resolve_pydantic_coder_settings(
-    environ: dict[str, str] | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> PydanticCoderConfig:
     """Resolve a configuração do Pydantic AI Coder a partir das variáveis canônicas.
 
@@ -57,10 +56,20 @@ def resolve_pydantic_coder_settings(
     Returns:
         Instância de PydanticCoderConfig com parâmetros resolvidos.
     """
-    env_map = dict(environ) if environ is not None else dict(os.environ)
-    runner = AgentRunner(environ=env_map)
-    base_url, api_key = runner._resolve_ollama_settings()
-    model = runner._resolve_default_model(fallback="agentic-qwen:7b")
+    env_map = environ if environ is not None else os.environ
+    base_url = (
+        env_map.get("OPENAI_API_BASE")
+        or env_map.get("OLLAMA_API_BASE")
+        or env_map.get("HARNESS_LLM_EXTERNAL_BASE_URL")
+        or env_map.get("LLM_BASE_URL")
+        or "http://127.0.0.1:11434/v1"
+    )
+    api_key = env_map.get("OPENAI_API_KEY") or env_map.get("OLLAMA_API_KEY") or ""
+    model = (
+        env_map.get("LLM_DEFAULT_MODEL")
+        or env_map.get("LLM_MODEL")
+        or "agentic-qwen:7b"
+    )
 
     return PydanticCoderConfig(
         model_name=model,
