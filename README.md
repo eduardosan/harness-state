@@ -75,6 +75,19 @@ export SPEC_HUB_REPO="org/spec-hub"
 
 ---
 
+## Documentação de Arquitetura
+
+A especificação completa da plataforma, topologia e fluxos detalhados estão disponíveis em:
+
+- [Índice de Arquitetura](./docs/architecture/README.md)
+- [Plataforma de Harness SDD Federada](./docs/architecture/federated-sdd-platform.md)
+- [Ciclo de Resolução de Bugs Guiado por SDD](./docs/architecture/bug-lifecycle-sdd-flow.md)
+- [Staged Code Evaluation & Cross-Repo Gate](./docs/architecture/code-evaluation-flow.md)
+- [Referência de Comandos da CLI `harness`](./docs/cli.md)
+- [Fluxo de State Tracking](./docs/flow.md)
+
+---
+
 ## Desenvolvimento e Testes
 
 Consulte o arquivo [`CONTRIBUTING.md`](./CONTRIBUTING.md) para diretrizes detalhadas de contribuição e convenções de estilo.
