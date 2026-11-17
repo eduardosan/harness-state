@@ -60,16 +60,19 @@ como metodologia de engenharia e execução autônoma de agentes de IA.
    ao operador, que executará os comandos manualmente e encaminhará a saída
    ao agente.
 6. **Governança e Sincronização Obrigatória de Prompts (Langfuse SSOT):**
-   - **Mapeamento em Specs:** Toda especificação (spec) DEVE conter obrigatoriamente
-     a declaração formal de prompts afetados no frontmatter (`prompts:`) e na seção
-     §3.5 de governança.
-   - **Onda de Agentes (Draft):** A onda de agentes que implementa o código DEVE
-     sempre escrever o arquivo local do prompt (ex: `prompts.py`) e salvá-lo como
-     `draft` no Langfuse durante a execução (`harness spec run` / `harness bug run`).
+   - **Mapeamento em Specs (Quando Aplicável):** O mapeamento formal de prompts no
+     frontmatter (`prompts:`) e na seção §3.5 é estritamente obrigatório sempre que a
+     especificação envolver agentes de IA ou alterações em prompts/instruções de LLM.
+     Para specs puras de infraestrutura, refatoração ou backend sem agentes, a
+     declaração de prompts é dispensada.
+   - **Onda de Agentes (Draft):** Quando houver prompts, a onda de agentes que
+     implementa o código DEVE sempre escrever o arquivo local do prompt (ex: `prompts.py`)
+     e salvá-lo como `draft` no Langfuse durante a execução (`harness spec run` /
+     `harness bug run`).
    - **Fechamento (Production):** Ao concluir formalmente a spec (`harness spec finish`
-     / Gate 5) ou o bug (`harness bug finish`), o prompt deve ser promovido de
-     forma atômica para `production` no Langfuse SSOT.
+     / Gate 5) ou o bug (`harness bug finish`), os prompts mapeados devem ser
+     promovidos de forma atômica para `production` no Langfuse SSOT.
    - **Instrução de CLI para Agentes:** Agentes locais ou em modo autônomo devem
-     manter o arquivo de prompt sincronizado e executar os comandos de sincronização
+     manter os arquivos de prompt sincronizados e executar os comandos de sincronização
      do harness conforme orientações do pipeline.
 <!-- SUPERPOWERS-HARNESS:END -->"""
