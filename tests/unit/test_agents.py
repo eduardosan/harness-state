@@ -811,3 +811,25 @@ def test_known_agents_contem_pydantic_coder_e_providers_pagos() -> None:
     assert "claude" in KNOWN_AGENTS
     assert "antigravity" in KNOWN_AGENTS
 
+
+def test_resolve_ollama_settings_respeita_precedencia_cloud_e_remota() -> None:
+    """Business Rule: _resolve_ollama_settings deve usar variáveis existentes e não fazer fallback para localhost."""
+    custom_env = {
+        "HARNESS_LLM_EXTERNAL_BASE_URL": "http://runner.internal:11434/v1",
+        "OLLAMA_API_KEY": "secret-cloud-key",
+    }
+    runner = AgentRunner(environ=custom_env)
+    url, key = runner._resolve_ollama_settings()
+    assert url == "http://runner.internal:11434/v1"
+    assert key == "secret-cloud-key"
+
+
+def test_resolve_default_model_respeita_variaveis_de_ambiente() -> None:
+    """Business Rule: _resolve_default_model deve ler LLM_DEFAULT_MODEL da esteira."""
+    custom_env = {
+        "LLM_DEFAULT_MODEL": "ollama:qwen2.5-coder:14b",
+    }
+    runner = AgentRunner(environ=custom_env)
+    assert runner._resolve_default_model() == "ollama:qwen2.5-coder:14b"
+
+

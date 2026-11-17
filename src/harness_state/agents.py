@@ -99,12 +99,9 @@ KNOWN_AGENTS: dict[str, AgentConfig] = {
     "pydantic-coder": AgentConfig(
         id="pydantic-coder",
         name="Pydantic AI Coder Agent",
-        default_model="ollama:agentic-qwen:7b",
+        default_model=None,
         supported_modes=["python-native", "tools"],
-        env_vars={
-            "OPENAI_API_BASE": "http://127.0.0.1:11434/v1",
-            "OPENAI_API_KEY": "ollama",
-        },
+        env_vars={},
         capabilities=["subagents", "python-native", "tools", "continue"],
     ),
 }
@@ -1175,6 +1172,22 @@ class AgentRunner:
             api_key = "ollama"
 
         return base_url, api_key
+
+    def _resolve_default_model(self, fallback: str = "agentic-qwen:7b") -> str:
+        """Resolve o modelo padrão do ecossistema a partir do ambiente canônico.
+
+        Args:
+            fallback: Nome do modelo de contingência padrão.
+
+        Returns:
+            Identificador do modelo resolvido.
+        """
+        return (
+            self.environ.get("LLM_DEFAULT_MODEL")
+            or self.environ.get("LLM_MODEL")
+            or self.environ.get("OPENCODE_MODEL")
+            or fallback
+        )
 
     def build_prompt(
         self,
