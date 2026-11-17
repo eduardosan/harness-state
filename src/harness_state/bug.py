@@ -2487,6 +2487,8 @@ def send_bug_telemetry_to_es(
     pr_number: int | None = None,
     pr_url: str | None = None,
     test_passed: bool = True,
+    agent_id: str | None = None,
+    execution_duration_sec: float | None = None,
 ) -> bool:
     """Envia payload de telemetria do ciclo de bugfix para o cluster Elasticsearch.
 
@@ -2496,6 +2498,8 @@ def send_bug_telemetry_to_es(
         pr_number: Número do Pull Request se aberto.
         pr_url: URL do Pull Request no GitHub se aberto.
         test_passed: Indica se a asserção do teste atendeu à fase.
+        agent_id: Identificador opcional do agente executor da tarefa.
+        execution_duration_sec: Tempo de execução decorrido em segundos.
 
     Returns:
         True se a telemetria foi enviada com sucesso, False caso contrário.
@@ -2533,6 +2537,9 @@ def send_bug_telemetry_to_es(
         "pr_number": pr_number,
         "pr_url": pr_url,
         "test_passed": test_passed,
+        "agent_id": agent_id,
+        "runtime": agent_id or "default",
+        "execution_duration_sec": execution_duration_sec,
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
