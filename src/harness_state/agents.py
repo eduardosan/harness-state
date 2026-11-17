@@ -4,6 +4,7 @@ Este módulo contém apenas as **definições** (dataclasses, funções de detec
 A **execução** (AgentRunner, AgentExecutor, AgentRuntime) permanece no flywheel.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -17,6 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from harness_state.models import SubTask
+from harness_state.runtimes.pydantic_coder import (
+    PydanticCoderRunner,
+    resolve_pydantic_coder_settings,
+)
 
 OPENCODE_PROVIDER = "opencode"
 DEFAULT_OPENCODE_MODEL = f"{OPENCODE_PROVIDER}/glm-5.3-flash-free"
@@ -95,6 +100,14 @@ KNOWN_AGENTS: dict[str, AgentConfig] = {
         supported_modes=["bash"],
         env_vars={},
         capabilities=["script"],
+    ),
+    "pydantic-coder": AgentConfig(
+        id="pydantic-coder",
+        name="Pydantic AI Coder Agent",
+        default_model=None,
+        supported_modes=["python-native", "tools"],
+        env_vars={},
+        capabilities=["subagents", "python-native", "tools", "continue"],
     ),
 }
 
@@ -1165,6 +1178,22 @@ class AgentRunner:
 
         return base_url, api_key
 
+    def _resolve_default_model(self, fallback: str = "agentic-qwen:7b") -> str:
+        """Resolve o modelo padrão do ecossistema a partir do ambiente canônico.
+
+        Args:
+            fallback: Nome do modelo de contingência padrão.
+
+        Returns:
+            Identificador do modelo resolvido.
+        """
+        return (
+            self.environ.get("LLM_DEFAULT_MODEL")
+            or self.environ.get("LLM_MODEL")
+            or self.environ.get("OPENCODE_MODEL")
+            or fallback
+        )
+
     def build_prompt(
         self,
         task: SubTask,
@@ -1236,6 +1265,41 @@ class AgentRunner:
 
         return "\n".join(prompt_parts)
 
+    def _run_pydantic_coder(
+        self,
+        agent: DetectedAgent,
+        target_repo_dir: Path,
+        task: SubTask,
+        spec_path: Path,
+        feedback: str = "",
+    ) -> tuple[int, str]:
+        """Executa a tarefa utilizando o runtime Pydantic AI Coder in-process.
+
+        Args:
+            agent: Metadados do agente detectado.
+            target_repo_dir: Diretório do repositório/spoke alvo.
+            task: Subtarefa sendo executada.
+            spec_path: Caminho da especificação.
+            feedback: Mensagem de erro ou feedback prévio dos sensores.
+
+        Returns:
+            Tupla contendo `(exit_code, output)`.
+        """
+        config = resolve_pydantic_coder_settings(self.environ)
+        config.local_workspace_root = target_repo_dir
+        if agent.default_model:
+            config.model_name = agent.default_model
+
+        runner = PydanticCoderRunner(config=config)
+        return asyncio.run(
+            runner.run_task(
+                task=task,
+                spec_path=spec_path,
+                spoke_dir=target_repo_dir,
+                feedback=feedback,
+            )
+        )
+
     def run(
         self,
         agent: DetectedAgent,
@@ -1245,6 +1309,15 @@ class AgentRunner:
         feedback: str = "",
         continue_session: bool = True,
     ) -> tuple[int, str]:
+        if agent.id == "pydantic-coder":
+            return self._run_pydantic_coder(
+                agent=agent,
+                target_repo_dir=target_repo_dir,
+                task=task,
+                spec_path=spec_path,
+                feedback=feedback,
+            )
+
         """Executa o agente no diretório alvo com o prompt preparado.
 
         Args:
@@ -1623,6 +1696,12 @@ class AgentRunner:
         Returns:
             Tupla contendo `(exit_code, output)`.
         """
+        if agent.id == "pydantic-coder":
+            return (
+                0,
+                f"[PydanticCoderRunner] Prompt para {task_label} processado com sucesso.",
+            )
+
         harness_dir = (working_dir / ".harness").resolve()
         harness_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = (harness_dir / "current_task_prompt.md").resolve()

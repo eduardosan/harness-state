@@ -242,3 +242,39 @@ def test_closure_gate_blocks_when_judge_rejects(tmp_path: Path) -> None:
     assert outcome.all_waves_complete is False
     assert outcome.judge_score == 0.75
     assert "Gate 5 Reprovado" in outcome.feedback
+
+
+def test_orchestrator_executa_tarefa_com_pydantic_coder(tmp_path: Path) -> None:
+    """Business Rule: orchestrator deve executar o loop agente-sensores com pydantic-coder."""
+    from harness_state.agents import DetectedAgent
+
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    orch = HarnessOrchestrator(
+        project_root=tmp_path,
+        verify_runner=lambda _dir: (0, "All tests passed"),
+    )
+    spec_run = SpecRun(
+        spec_id="SPEC-010",
+        title="Runtime Coder",
+        author="dev",
+        tasks={},
+        status=TaskState.IN_PROGRESS,
+    )
+    task = SubTask(id="task-1", repo="spoke-repo", wave=1, branch="agent/task-1")
+    code, output = orch._run_agent_verify_loop(
+        active_spec=spec_run,
+        next_task=task,
+        target_repo_dir=tmp_path,
+        spec_path=tmp_path / "SPEC-010.md",
+        selected_agent=agent,
+        was_already_in_progress=False,
+        max_iterations=1,
+    )
+    assert code == 0
+    assert "All tests passed" in output
+

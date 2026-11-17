@@ -799,3 +799,82 @@ def test_agent_runner_qualifies_default_opencode_model(tmp_path: Path) -> None:
 
     cmd = fake_subprocess.cmds[0]
     assert cmd[cmd.index("--model") + 1] == "opencode/glm-5.3-flash-free"
+
+
+def test_known_agents_contem_pydantic_coder_e_providers_pagos() -> None:
+    """Business Rule: o catálogo deve incluir pydantic-coder e manter claude e antigravity."""
+    from harness_state.agents import KNOWN_AGENTS
+    assert "pydantic-coder" in KNOWN_AGENTS
+    coder = KNOWN_AGENTS["pydantic-coder"]
+    assert "subagents" in coder.capabilities
+    assert "python-native" in coder.capabilities
+    assert "claude" in KNOWN_AGENTS
+    assert "antigravity" in KNOWN_AGENTS
+
+
+def test_resolve_ollama_settings_respeita_precedencia_cloud_e_remota() -> None:
+    """Business Rule: _resolve_ollama_settings deve usar variáveis existentes e não fazer fallback para localhost."""
+    custom_env = {
+        "HARNESS_LLM_EXTERNAL_BASE_URL": "http://runner.internal:11434/v1",
+        "OLLAMA_API_KEY": "secret-cloud-key",
+    }
+    runner = AgentRunner(environ=custom_env)
+    url, key = runner._resolve_ollama_settings()
+    assert url == "http://runner.internal:11434/v1"
+    assert key == "secret-cloud-key"
+
+
+def test_resolve_default_model_respeita_variaveis_de_ambiente() -> None:
+    """Business Rule: _resolve_default_model deve ler LLM_DEFAULT_MODEL da esteira."""
+    custom_env = {
+        "LLM_DEFAULT_MODEL": "ollama:qwen2.5-coder:14b",
+    }
+    runner = AgentRunner(environ=custom_env)
+    assert runner._resolve_default_model() == "ollama:qwen2.5-coder:14b"
+
+
+def test_agent_runner_executa_pydantic_coder(tmp_path: Path) -> None:
+    """Business Rule: AgentRunner deve despachar tarefas para o runtime pydantic-coder."""
+    runner = AgentRunner()
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    task = SubTask(id="task-coder-1", repo="test-repo", wave=1, branch="agent/task-coder-1")
+    spec_path = tmp_path / "SPEC-010.md"
+    spec_path.write_text("# Spec 010", encoding="utf-8")
+
+    code, output = runner.run(
+        agent=agent,
+        target_repo_dir=tmp_path,
+        task=task,
+        spec_path=spec_path,
+        feedback="",
+    )
+    assert code == 0
+    assert "pydantic" in output.lower() or "tarefa" in output.lower()
+
+
+def test_agent_runner_executa_prompt_pydantic_coder(tmp_path: Path) -> None:
+    """Business Rule: AgentRunner deve executar prompt arbitrário com pydantic-coder sem invocar subprocess."""
+    runner = AgentRunner()
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    code, output = runner.run_prompt(
+        agent=agent,
+        working_dir=tmp_path,
+        prompt_text="Resumo da tarefa",
+        task_label="teste",
+    )
+    assert code == 0
+    assert "PydanticCoderRunner" in output
+
+
+
+

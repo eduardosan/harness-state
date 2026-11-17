@@ -353,6 +353,7 @@ def send_gate_telemetry(
     status: str,
     score: float,
     es_url: str | None = None,
+    agent_id: str | None = None,
 ) -> bool:
     """Envia payload JSON de telemetria do gate para o cluster Elasticsearch.
 
@@ -361,6 +362,7 @@ def send_gate_telemetry(
         status: Status de conclusão do gate (APPROVED ou FAILED).
         score: Nota de conformidade (0.0 a 1.0).
         es_url: Endpoint HTTP do Elasticsearch; se omitido, resolve via config/env.
+        agent_id: Identificador opcional do agente de IA executor.
 
     Returns:
         True se a telemetria foi enviada com sucesso, False caso contrário.
@@ -400,6 +402,8 @@ def send_gate_telemetry(
         "status": status,
         "compliance_score": score,
         "evaluator": "llm-as-a-judge",
+        "agent_id": agent_id,
+        "runtime": agent_id or "default",
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -495,6 +499,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     telemetry_parser.add_argument(
         "--es-url", default=default_es, help="URL do Elasticsearch"
     )
+    telemetry_parser.add_argument(
+        "--agent", dest="agent_id", default=None, help="Identificador do agente executor"
+    )
 
     return parser
 
@@ -540,6 +547,7 @@ def main() -> None:
             status=args.status,
             score=args.score,
             es_url=args.es_url,
+            agent_id=getattr(args, "agent_id", None),
         )
 
 

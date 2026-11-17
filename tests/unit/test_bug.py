@@ -1526,3 +1526,46 @@ def test_prompt_sensor_validate_accepts_dict_prompts(tmp_path: Path) -> None:
     mock_mgr.fetch_prompt.assert_called_once_with(
         "vehicles/vehicle_search_agent_instruction"
     )
+
+
+def test_refine_bug_plan_with_pydantic_coder_agent() -> None:
+    """Business Rule: refine_bug_plan_with_llm deve executar com pydantic-coder via AgentRunner."""
+    from harness_state.agents import DetectedAgent
+    from harness_state.bug import BugPlan, refine_bug_plan_with_llm
+
+    agent = DetectedAgent(
+        id="pydantic-coder",
+        name="Pydantic AI Coder",
+        binary_path="python",
+        description="In-process agent",
+    )
+    plan = BugPlan(
+        title="[Bug] Erro no teste",
+        summary="Falha",
+        observed_behavior="Err",
+        expected_behavior="Ok",
+        affected_spoke="test-spoke",
+        affected_capability="core",
+        runtime_contract="Contract",
+        issue_id=42,
+    )
+    with patch(
+        "harness_state.bug.call_llm_json_completion",
+        return_value={
+            "title": "[Bug] Erro refinado",
+            "summary": "Falha corrigida",
+            "observed_behavior": "Err",
+            "expected_behavior": "Ok",
+            "affected_spoke": "test-spoke",
+            "affected_capability": "core",
+            "runtime_contract": "Contract",
+            "issue_id": 42,
+        },
+    ):
+        refined = refine_bug_plan_with_llm(
+            current_plan=plan,
+            refinement_instruction="Ajustar título",
+            agent=agent,
+        )
+    assert refined.title == "[Bug] Erro refinado"
+

@@ -126,3 +126,59 @@ def test_collector_send_telemetry() -> None:
         )
         assert success is True
         assert mock_url.called
+
+
+def test_send_gate_telemetry_inclui_provedor_de_agente() -> None:
+    """Business Rule: send_gate_telemetry deve incluir agent_id e runtime no payload."""
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__.return_value.status = 201
+
+    with patch("urllib.request.urlopen", return_value=mock_ctx) as mock_url:
+        success = send_gate_telemetry(
+            spec_id="SPEC-010-test",
+            status="APPROVED",
+            score=1.0,
+            es_url="http://127.0.0.1:9200/harness-sensor-telemetry/_doc",
+            agent_id="pydantic-coder",
+        )
+        assert success is True
+        call_args = mock_url.call_args[0][0]
+        data = json.loads(call_args.data.decode("utf-8"))
+        assert data["agent_id"] == "pydantic-coder"
+        assert data["runtime"] == "pydantic-coder"
+
+
+def test_send_bug_telemetry_inclui_provedor_de_agente() -> None:
+    """Business Rule: send_bug_telemetry_to_es deve registrar agent_id e duration no Elasticsearch."""
+    from harness_state.bug import BugPlan, send_bug_telemetry_to_es
+
+    plan = BugPlan(
+        title="[Bug] Erro no coletor",
+        summary="Falha",
+        observed_behavior="Err",
+        expected_behavior="Ok",
+        affected_spoke="test-spoke",
+        affected_capability="core",
+        runtime_contract="Contract",
+        issue_id=77,
+    )
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__.return_value.status = 200
+
+    with (
+        patch("urllib.request.urlopen", return_value=mock_ctx) as mock_url,
+        patch.dict("os.environ", {"ES_URL": "http://mock-es:9200"}),
+    ):
+        success = send_bug_telemetry_to_es(
+            plan=plan,
+            stage="RESOLVED",
+            agent_id="pydantic-coder",
+            execution_duration_sec=12.4,
+        )
+        assert success is True
+        call_args = mock_url.call_args[0][0]
+        data = json.loads(call_args.data.decode("utf-8"))
+        assert data["agent_id"] == "pydantic-coder"
+        assert data["runtime"] == "pydantic-coder"
+        assert data["execution_duration_sec"] == 12.4
+
