@@ -799,3 +799,15 @@ def test_agent_runner_qualifies_default_opencode_model(tmp_path: Path) -> None:
 
     cmd = fake_subprocess.cmds[0]
     assert cmd[cmd.index("--model") + 1] == "opencode/glm-5.3-flash-free"
+
+
+def test_known_agents_contem_pydantic_coder_e_providers_pagos() -> None:
+    """Business Rule: o catálogo deve incluir pydantic-coder e manter claude e antigravity."""
+    from harness_state.agents import KNOWN_AGENTS
+    assert "pydantic-coder" in KNOWN_AGENTS
+    coder = KNOWN_AGENTS["pydantic-coder"]
+    assert "subagents" in coder.capabilities
+    assert "python-native" in coder.capabilities
+    assert "claude" in KNOWN_AGENTS
+    assert "antigravity" in KNOWN_AGENTS
+

@@ -96,6 +96,17 @@ KNOWN_AGENTS: dict[str, AgentConfig] = {
         env_vars={},
         capabilities=["script"],
     ),
+    "pydantic-coder": AgentConfig(
+        id="pydantic-coder",
+        name="Pydantic AI Coder Agent",
+        default_model="ollama:agentic-qwen:7b",
+        supported_modes=["python-native", "tools"],
+        env_vars={
+            "OPENAI_API_BASE": "http://127.0.0.1:11434/v1",
+            "OPENAI_API_KEY": "ollama",
+        },
+        capabilities=["subagents", "python-native", "tools", "continue"],
+    ),
 }
 
 
