@@ -12,6 +12,7 @@ SECTION_MARKERS = (
     "3. **Análise de Bugs (RCA Mandatória):**",
     "4. **Local da Spec (SSOT):**",
     "5. **Infraestrutura Gerenciada (Acesso Remoto Restrito):**",
+    "6. **Governança e Sincronização Obrigatória de Prompts (Langfuse SSOT):**",
 )
 
 
@@ -62,6 +63,18 @@ def test_block_redirecta_spec_para_ssot_federado() -> None:
     assert "docs/superpowers/specs/" in SUPERPOWERS_GUIDELINES_BLOCK
     assert "<project>-spec-hub/specs/SPEC-XXX.md" in SUPERPOWERS_GUIDELINES_BLOCK
     assert "`SPEC-XXX-<slug>.md`" in SUPERPOWERS_GUIDELINES_BLOCK
+
+
+def test_block_exige_mapeamento_e_sync_de_prompts_langfuse() -> None:
+    """Business Rule: as diretrizes exigem mapeamento de prompts e sincronização no Langfuse.
+
+    A regra garante que os agentes declarem prompts nas specs, salvem como
+    draft durante a onda e sincronizem para production no fechamento.
+    """
+    assert "Governança e Sincronização Obrigatória de Prompts (Langfuse SSOT)" in SUPERPOWERS_GUIDELINES_BLOCK
+    assert "prompts:" in SUPERPOWERS_GUIDELINES_BLOCK
+    assert "`draft` no Langfuse" in SUPERPOWERS_GUIDELINES_BLOCK
+    assert "`production` no Langfuse" in SUPERPOWERS_GUIDELINES_BLOCK
 
 
 def test_installer_reusa_a_mesma_constante_canonica() -> None:

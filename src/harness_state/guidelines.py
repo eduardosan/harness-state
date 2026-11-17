@@ -59,4 +59,17 @@ como metodologia de engenharia e execução autônoma de agentes de IA.
    Medições de capacidade/logs/processos nessas máquinas devem ser solicitadas
    ao operador, que executará os comandos manualmente e encaminhará a saída
    ao agente.
+6. **Governança e Sincronização Obrigatória de Prompts (Langfuse SSOT):**
+   - **Mapeamento em Specs:** Toda especificação (spec) DEVE conter obrigatoriamente
+     a declaração formal de prompts afetados no frontmatter (`prompts:`) e na seção
+     §3.5 de governança.
+   - **Onda de Agentes (Draft):** A onda de agentes que implementa o código DEVE
+     sempre escrever o arquivo local do prompt (ex: `prompts.py`) e salvá-lo como
+     `draft` no Langfuse durante a execução (`harness spec run` / `harness bug run`).
+   - **Fechamento (Production):** Ao concluir formalmente a spec (`harness spec finish`
+     / Gate 5) ou o bug (`harness bug finish`), o prompt deve ser promovido de
+     forma atômica para `production` no Langfuse SSOT.
+   - **Instrução de CLI para Agentes:** Agentes locais ou em modo autônomo devem
+     manter o arquivo de prompt sincronizado e executar os comandos de sincronização
+     do harness conforme orientações do pipeline.
 <!-- SUPERPOWERS-HARNESS:END -->"""
