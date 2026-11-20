@@ -396,7 +396,9 @@ def generate_config_from_env() -> HarnessLocalConfig:
         "OLLAMA_EXTERNAL_BASE_URL",
     )
     llm_def_model = first_env_value("LLM_DEFAULT_MODEL", "LLM_MODEL")
-    llm_jdg_model = first_env_value("LLM_JUDGE_MODEL", "JUDGE_MODEL")
+    llm_jdg_model = first_env_value(
+        "LLM_JUDGE_MODEL", "JUDGE_MODEL", "HARNESS_JUDGE_MODEL"
+    )
 
     hub_org = first_env_value("SPEC_HUB_ORG", "GITHUB_ORG", "HARNESS_SPEC_HUB_ORG")
     hub_repo = first_env_value("SPEC_HUB_REPO", "HARNESS_SPEC_HUB_REPO")
@@ -703,6 +705,8 @@ def apply_llm_and_hub_env(
     )
     set_env_if_missing("OPENAI_BASE_URL", llm_url)
     set_env_if_missing("HARNESS_JUDGE_MODEL", config.llm.judge_model)
+    set_env_if_missing("LLM_JUDGE_MODEL", config.llm.judge_model)
+    set_env_if_missing("JUDGE_MODEL", config.llm.judge_model)
     set_env_if_missing("HARNESS_GITHUB_ORG", config.spec_hub.github_org)
     set_env_if_missing("HARNESS_SPEC_HUB_REPO", config.spec_hub.default_repo)
     set_env_if_missing("HARNESS_FLYWHEEL_REPO", config.spec_hub.flywheel_repo)

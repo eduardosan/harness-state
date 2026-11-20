@@ -23,6 +23,7 @@ from harness_state.judge import (
     main,
     measure_metric_with_majority,
     resolve_fallback_judge_model,
+    resolve_primary_judge_model,
 )
 
 
@@ -52,6 +53,19 @@ def test_primary_judge_resolves_canonical_configured_model(
     model = build_judge_model()
 
     assert model.get_model_name() == "opencode/glm-5.3-flash-free"
+
+
+def test_resolve_primary_judge_model_respects_harness_judge_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Business Rule: A variável HARNESS_JUDGE_MODEL injetada pelo config alimenta o tier 1."""
+    monkeypatch.delenv("JUDGE_MODEL", raising=False)
+    monkeypatch.delenv("LLM_JUDGE_MODEL", raising=False)
+    monkeypatch.delenv("HARNESS_JUDGE_MODEL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("HARNESS_JUDGE_MODEL", "agentic-qwen")
+
+    assert resolve_primary_judge_model() == "agentic-qwen"
 
 
 def test_fallback_judge_resolves_ecosystem_default_model(
@@ -92,6 +106,7 @@ def test_build_judge_model_defaults_to_opencode_free_tier(
     """Business Rule: sem config, o tier 1 default do juiz é o id canônico OpenCode."""
     monkeypatch.delenv("JUDGE_MODEL", raising=False)
     monkeypatch.delenv("LLM_JUDGE_MODEL", raising=False)
+    monkeypatch.delenv("HARNESS_JUDGE_MODEL", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
     model = build_judge_model()
