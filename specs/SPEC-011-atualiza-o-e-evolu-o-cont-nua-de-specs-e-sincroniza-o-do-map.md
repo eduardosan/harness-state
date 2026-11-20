@@ -17,26 +17,26 @@ product:
 capability: agent-workflow-platform
 status: IN_PROGRESS
 prompts:
-- name: harness_state/instruction
+- name: harness-state/architect_spec_discovery
   target_repo: eduardosan/harness-state
   file: src/harness_state/runtimes/coder_prompts.py
   symbol: ARCHITECT_SPEC_DISCOVERY_INSTRUCTION
   description: Instrução do Agente Arquiteto para inspecionar o catálogo de specs
     existentes durante o comando plan, detectando similaridade semântica para evitar
     specs duplicadas e direcionar para evolução
-- name: harness_state/instruction
+- name: harness-state/architect_spec_evolution
   target_repo: eduardosan/harness-state
   file: src/harness_state/runtimes/coder_prompts.py
   symbol: ARCHITECT_SPEC_EVOLUTION_INSTRUCTION
   description: Instrução do Agente Arquiteto para reconciliar deltas de especificações
     existentes, preservando tarefas congeladas e atualizando contratos
-- name: harness_state/instruction
+- name: harness-state/coder_code_evolution
   target_repo: eduardosan/harness-state
   file: src/harness_state/runtimes/coder_prompts.py
   symbol: CODER_CODE_EVOLUTION_INSTRUCTION
   description: Instrução do Agente Coder (Pydantic AI Coder) para evoluir a base de
     código a partir de contratos atualizados via TDD Fail-First e zero regressão
-- name: harness_state/instruction
+- name: harness-state/capability_map_sync
   target_repo: eduardosan/harness-state
   file: src/harness_state/runtimes/coder_prompts.py
   symbol: CAPABILITY_MAP_SYNC_INSTRUCTION
@@ -85,7 +85,7 @@ Esta especificação define:
 ## 2. Escopo e Repositórios Afetados
 
 - [ ] **Sub-tarefa 1 (`eduardosan/harness-spec-hub`):** [Onda 1] Atualizar o template padrão `SPEC-TEMPLATE.md`, as diretrizes de governança de Living Specs, as regras de descoberta semântica no catálogo e a automação do mapa de capacidades em `capabilities/` durante a aprovação formal de specs (Gate 2).
-- [x] **Sub-tarefa 2 (`eduardosan/harness-state`):** [Onda 2] Implementar motor de descoberta prévia de specs (`SpecDiscoveryEngine`), modelos de revisão (`SpecRevision`), motor de reconciliação de deltas (`SpecEvolutionEngine`), comando `harness spec update`, enriquecimento do comando `harness spec plan` com roteamento inteligente, gatilho de sincronização do mapa de capacidades no comando `harness spec approve` mantendo a sessão/identidade do agente autor, e registrar prompts canônicos em `src/harness_state/runtimes/coder_prompts.py`.
+- [ ] **Sub-tarefa 2 (`eduardosan/harness-state`):** [Onda 2] Implementar motor de descoberta prévia de specs (`SpecDiscoveryEngine`), modelos de revisão (`SpecRevision`), motor de reconciliação de deltas (`SpecEvolutionEngine`), comando `harness spec update`, enriquecimento do comando `harness spec plan` com roteamento inteligente, gatilho de sincronização do mapa de capacidades no comando `harness spec approve` mantendo a sessão/identidade do agente autor, e registrar prompts canônicos em `src/harness_state/runtimes/coder_prompts.py`.
 - [ ] **Sub-tarefa 3 (`eduardosan/agentic-flywheel`):** [Onda 2] Adaptar o fan-out incremental (`src/flywheel/spec_fanout.py`) para emitir sub-specs de evolução sem colidir com branches de tarefas já concluídas, e integrar o Coder Runtime para executar a evolução de código com TDD Fail-First.
 
 ---
@@ -186,6 +186,95 @@ class SpecRun(BaseModel):
         if self.status in (TaskState.READY, TaskState.APPROVED):
             self.status = TaskState.IN_PROGRESS
 ```
+
+---
+
+### 3.5. Governança e Sincronização Obrigatória de Prompts (Langfuse SSOT)
+
+Esta especificação define e governa quatro prompts fundamentais para o ecossistema, mapeados conforme a diretriz `SPEC-PROMPT-01`:
+
+#### Prompt 1: `harness-state/architect_spec_discovery`
+- **Repositório:** `eduardosan/harness-state`
+- **Arquivo Local / Fallback:** `src/harness_state/runtimes/coder_prompts.py` (constante `ARCHITECT_SPEC_DISCOVERY_INSTRUCTION`)
+- **Papel:** Instrução do Agente Arquiteto para inspecionar o catálogo de specs no comando plan e evitar duplicações
+- **Idioma:** Estritamente em inglês
+- **Texto Canônico do Prompt:**
+
+```text
+You are the Software Architect responsible for spec discovery and duplicate prevention in the SDD ecosystem.
+Your task is to analyze an incoming planning request and determine whether it modifies an existing specification or genuinely requires a new one.
+
+Execution Protocol:
+1. CATALOG SCAN: Search the existing specifications in 'specs/SPEC-*.md'. Read their titles, bounded contexts, business capabilities, and interface contracts.
+2. SEMANTIC CORRELATION: Compare the user's intent against existing specs. Check if the requested change is an extension, bugfix, or refactoring of an already specified component.
+3. ROUTING DECISION:
+   - If an existing spec already governs the affected domain/contracts, recommend EVOLUTION of that spec (spec update/refine). Identify which spec ID and why.
+   - If the request addresses a completely new domain, capability, or architectural boundary, recommend CREATION of a new specification.
+4. STRUCTURED OUTPUT: Return a structured assessment containing match confidence, target spec ID, rationale, and recommended action.
+```
+
+#### Prompt 2: `harness-state/architect_spec_evolution`
+- **Repositório:** `eduardosan/harness-state`
+- **Arquivo Local / Fallback:** `src/harness_state/runtimes/coder_prompts.py` (constante `ARCHITECT_SPEC_EVOLUTION_INSTRUCTION`)
+- **Papel:** Instrução de sistema do Agente Arquiteto responsável pela reconciliação semântica da spec
+- **Idioma:** Estritamente em inglês
+- **Texto Canônico do Prompt:**
+
+```text
+You are the Lead Software Architect responsible for evolving existing technical specifications in the Spec-Driven Development (SDD) federado platform.
+
+Your primary directives:
+1. PRESERVE COMPLETED WORK: Never regress, overwrite, or delete already completed and verified subtasks (frozen tasks). They represent delivered production code.
+2. CONTINUOUS SPEC EVOLUTION: When updating a specification, analyze the existing architecture, interfaces, and acceptance criteria. Update sections 1 (Context), 3 (Contracts), and 4 (Gherkin) to accommodate the new business requirements.
+3. CONTRACT INTEGRITY: Clearly document what is being added or refactored. If a public contract is modified, provide backwards-compatible deprecation paths or explicit migration strategies.
+4. SPEC REVISION TRACKING: Bump the specification SemVer version according to changes (PATCH for fixes, MINOR for new additive features, MAJOR for breaking contracts).
+5. STRUCTURE & STANDARDS: Strictly comply with canonical SDD markdown formatting, PEP 8, zero-nesting, and prompt governance rules.
+```
+
+#### Prompt 3: `harness-state/coder_code_evolution`
+- **Repositório:** `eduardosan/harness-state`
+- **Arquivo Local / Fallback:** `src/harness_state/runtimes/coder_prompts.py` (constante `CODER_CODE_EVOLUTION_INSTRUCTION`)
+- **Papel:** Instrução do Agente Coder (Pydantic AI Coder) para evolução de código fonte a partir de contratos atualizados
+- **Idioma:** Estritamente em inglês
+- **Texto Canônico do Prompt:**
+
+```text
+You are an expert autonomous software engineer operating in the inner-loop coder runtime.
+You have been tasked with evolving an existing codebase to match an updated technical specification.
+
+Execution Protocol:
+1. BASELINE INSPECTION: Read the existing tests and production code to understand the current implementation.
+2. TDD FAIL-FIRST: Write comprehensive unit tests capturing the new and modified interface contracts from Section 3 and Gherkin scenarios from Section 4. Verify that these new tests fail before touching production code.
+3. ZERO REGRESSION: Refactor and implement the required changes in production code. Ensure all legacy tests continue to pass and new tests turn green.
+4. QUALITY INVARIANTS: Strictly enforce cognitive complexity <= 15, no nested functions, no nested try-except blocks, Google-style docstrings, and full type annotations.
+5. CLEAN COMMIT: Provide clear, structured commits explaining the architectural changes introduced.
+```
+
+#### Prompt 4: `harness-state/capability_map_sync`
+- **Repositório:** `eduardosan/harness-state`
+- **Arquivo Local / Fallback:** `src/harness_state/runtimes/coder_prompts.py` (constante `CAPABILITY_MAP_SYNC_INSTRUCTION`)
+- **Papel:** Instrução de sistema para o agente autor da spec atualizar o mapa de capacidades (DDD) após aprovação formal (Gate 2)
+- **Idioma:** Estritamente em inglês
+- **Texto Canônico do Prompt:**
+
+```text
+You are the Software Architect Agent who authored the approved technical specification.
+Your task is to synchronize the Business Capability Map (DDD) in the spec hub.
+
+Execution Protocol:
+1. SPEC CONTEXT REVIEW: Analyze the newly approved specification, its bounded context, ubiquitous language, and public contracts.
+2. CAPABILITY DISCOVERY: Locate the corresponding capability file in 'capabilities/<capability_id>/capability.yaml' (or create a new one if this spec establishes a new capability).
+3. MAP RECONCILIATION:
+   - Add this specification to the 'specs' list with status 'APPROVED'.
+   - If the spec introduces new domain terms or ubiquitous language, update the 'ubiquitous_language' dictionary.
+   - If the spec introduces new services, spokes, or interactions, update the 'context_map'.
+   - If the spec affects client products, ensure 'supported_products' and product manifests in 'products/' are up to date.
+4. DETERMINISTIC DIFF: Output only the necessary, non-destructive YAML updates to preserve existing capabilities while reflecting the new architectural state.
+```
+
+**Ciclo de Sincronização em Duas Fases:**
+- **Fase de Onda (Draft):** Durante a execução da Onda 2, o agente grava os prompts localmente em `coder_prompts.py` e registra suas versões como `draft` no Langfuse.
+- **Fase de Fechamento (Production):** Ao executar `harness spec finish` (Gate 5), o orquestrador promove atomicamente os quatro prompts para a tag `production`.
 
 ---
 

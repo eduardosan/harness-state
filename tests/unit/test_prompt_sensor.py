@@ -351,3 +351,59 @@ def test_validate_sensor_ignores_prompts_of_other_repos(tmp_path: Path) -> None:
         violations = sensor.validate(declared_prompts=declared_prompts)
 
     assert violations == []
+
+
+def test_sensor_validates_langfuse_draft_queries_with_draft_label(tmp_path: Path) -> None:
+    """Business Rule: Validação de draft no Langfuse deve buscar com label='draft'."""
+    mock_mgr = MagicMock()
+    mock_mgr.is_configured = True
+
+    def mock_fetch(name: str, label: str | None = None, version: int | None = None):
+        if label == "draft":
+            return ("instrucao draft", 1)
+        raise PromptManagementError("Not found")
+
+    mock_mgr.fetch_prompt.side_effect = mock_fetch
+
+    sensor = PromptGovernanceSensor(project_root=tmp_path, prompt_manager=mock_mgr)
+    violations: list = []
+    sensor._check_langfuse_draft("harness-state/architect_spec_discovery", violations)
+    assert violations == []
+
+
+def test_sync_missing_declared_prompts_uses_file_and_symbol(tmp_path: Path) -> None:
+    """Business Rule: Sincronização de prompts ausentes respeita file e symbol da spec."""
+    from harness_state.sensors.prompt_sensor import sync_missing_declared_prompts
+
+    mock_mgr = MagicMock()
+    mock_mgr.is_configured = True
+    mock_mgr.fetch_prompt.side_effect = PromptManagementError("Not found")
+    mock_mgr.push_draft.return_value = 1
+
+    repo_dir = tmp_path / "harness-state"
+    runtimes_dir = repo_dir / "src" / "harness_state" / "runtimes"
+    runtimes_dir.mkdir(parents=True)
+    coder_prompts = runtimes_dir / "coder_prompts.py"
+    coder_prompts.write_text(
+        'ARCHITECT_SPEC_DISCOVERY_INSTRUCTION = """Instrução customizada do arquiteto."""\n',
+        encoding="utf-8",
+    )
+
+    prompts_to_sync = [
+        {
+            "name": "harness-state/architect_spec_discovery",
+            "target_repo": "eduardosan/harness-state",
+            "file": "src/harness_state/runtimes/coder_prompts.py",
+            "symbol": "ARCHITECT_SPEC_DISCOVERY_INSTRUCTION",
+        }
+    ]
+
+    synced = sync_missing_declared_prompts(repo_dir, mock_mgr, prompts_to_sync)
+    assert len(synced) == 1
+    assert synced[0] == ("harness-state/architect_spec_discovery", 1)
+    mock_mgr.push_draft.assert_called_once_with(
+        "harness-state/architect_spec_discovery",
+        "Instrução customizada do arquiteto.",
+        label="draft",
+    )
+
