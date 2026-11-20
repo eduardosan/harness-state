@@ -408,3 +408,16 @@ Endpoint POST /vehicles.
     is_valid, issues = validate_spec_feasibility(standard_spec)
     assert is_valid is True
     assert len(issues) == 0
+
+
+def test_match_canonical_prompt_does_not_overwrite_declared_name_with_generic_instruction() -> None:
+    """Business Rule: Prompts declarados com namespace de repositório não devem ser substituídos pelo fallback genérico instruction."""
+    from harness_state.spec.lifecycle import match_canonical_prompt
+
+    declared = "harness-state/architect_spec_discovery"
+    discovered = ["harness_state/instruction"]
+    clean_short = "harness_state"
+
+    canonical = match_canonical_prompt(declared, discovered, clean_short)
+    assert canonical == declared
+

@@ -254,6 +254,18 @@ def match_repo_prompt_file(
     return "", "prompts.py"
 
 
+def find_matching_suffix_prompt(
+    decl_suffix: str,
+    discovered: list[str],
+) -> str | None:
+    """Busca em discovered um prompt cujo sufixo coincida com o declarado."""
+    for disc in discovered:
+        disc_suffix = disc.split("/", 1)[1] if "/" in disc else disc
+        if disc_suffix == decl_suffix:
+            return disc
+    return None
+
+
 def match_canonical_prompt(
     declared_name: str,
     discovered: list[str],
@@ -274,17 +286,23 @@ def match_canonical_prompt(
     if declared_name in discovered:
         return declared_name
 
-    decl_prefix = declared_name.split("/")[0]
+    norm_decl = declared_name.replace("-", "_")
     for disc in discovered:
-        disc_prefix = disc.split("/")[0]
-        has_match = (
-            disc_prefix == decl_prefix
-            or disc_prefix in clean_short
-            or clean_short in disc_prefix
-            or len(discovered) == 1
-        )
-        if has_match:
+        if disc.replace("-", "_") == norm_decl:
             return disc
+
+    if "/" in declared_name:
+        decl_suffix = declared_name.split("/", 1)[1]
+        suffix_match = find_matching_suffix_prompt(decl_suffix, discovered)
+        return suffix_match or declared_name
+
+    suffix_match = find_matching_suffix_prompt(declared_name, discovered)
+    if suffix_match:
+        return suffix_match
+
+    if len(discovered) == 1:
+        return discovered[0]
+
     return None
 
 

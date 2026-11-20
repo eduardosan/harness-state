@@ -1337,8 +1337,10 @@ class HarnessOrchestrator:
             )
 
         if active_spec.prompts:
+            prompt_mgr = LangfusePromptManager()
             sync_modified_prompts_as_draft(
                 project_root=target_repo_dir,
+                prompt_manager=prompt_mgr,
                 target_prompts=active_spec.prompts,
             )
 

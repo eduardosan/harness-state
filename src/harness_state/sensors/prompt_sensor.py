@@ -185,15 +185,29 @@ class PromptGovernanceSensor:
             prompt_name: Nome do prompt declarado na spec.
             violations: Lista acumuladora onde PRM002 é registrada.
         """
-        has_error = False
+        found = False
         error_msg = ""
         try:
             self.prompt_manager.fetch_prompt(prompt_name)
+            found = True
         except PromptManagementError as exc:
-            has_error = True
             error_msg = str(exc)
 
-        if has_error:
+        if not found:
+            try:
+                self.prompt_manager.fetch_prompt(prompt_name, label="draft")
+                found = True
+            except PromptManagementError as exc:
+                error_msg = str(exc)
+
+        if not found:
+            try:
+                self.prompt_manager.fetch_prompt(prompt_name, label="latest")
+                found = True
+            except PromptManagementError as exc:
+                error_msg = str(exc)
+
+        if not found:
             violations.append(
                 PromptViolation(
                     file_path="specs",
@@ -389,6 +403,55 @@ def filter_prompts_for_repo(prompts: list[Any], repo_name: str) -> list[Any]:
     return [p for p in prompts if prompt_belongs_to_repo(p, repo_name, clean_repo)]
 
 
+def resolve_local_prompt_file(
+    project_root: Path,
+    p_item: Any,
+    p_name: str,
+) -> Path | None:
+    """Localiza o arquivo físico de prompt a partir do item ou por varredura."""
+    if isinstance(p_item, dict) and p_item.get("file"):
+        cand = project_root / str(p_item["file"])
+        if cand.is_file():
+            return cand
+    return find_local_prompt_file_for_name(project_root, p_name)
+
+
+def extract_text_for_declared_prompt(
+    local_file: Path,
+    p_item: Any,
+) -> str:
+    """Extrai texto do arquivo local respeitando o símbolo declarado se presente."""
+    var_name = (
+        str(p_item["symbol"])
+        if isinstance(p_item, dict) and p_item.get("symbol")
+        else "INSTRUCTION"
+    )
+    return extract_prompt_text_from_file(local_file, variable_name=var_name)
+
+
+def sync_single_missing_prompt(
+    project_root: Path,
+    manager: LangfusePromptManager,
+    p_item: Any,
+) -> tuple[str, int] | None:
+    """Sincroniza um único prompt ausente no Langfuse como draft."""
+    p_name = p_item["name"] if isinstance(p_item, dict) else str(p_item)
+    _, _, exists = fetch_prompt_from_manager(manager, p_name)
+    if exists:
+        return None
+
+    local_file = resolve_local_prompt_file(project_root, p_item, p_name)
+    if not local_file:
+        return None
+
+    text = extract_text_for_declared_prompt(local_file, p_item)
+    if not text:
+        return None
+
+    version = manager.push_draft(p_name, text, label="draft")
+    return (p_name, version)
+
+
 def sync_missing_declared_prompts(
     project_root: Path,
     manager: LangfusePromptManager,
@@ -407,18 +470,9 @@ def sync_missing_declared_prompts(
     synced: list[tuple[str, int]] = []
     repo_prompts = filter_prompts_for_repo(prompts_to_sync, project_root.name)
     for p_item in repo_prompts:
-        p_name = p_item["name"] if isinstance(p_item, dict) else str(p_item)
-        _, _, exists = fetch_prompt_from_manager(manager, p_name)
-        if exists:
-            continue
-        local_file = find_local_prompt_file_for_name(project_root, p_name)
-        if not local_file:
-            continue
-        text = extract_prompt_text_from_file(local_file)
-        if not text:
-            continue
-        version = manager.push_draft(p_name, text, label="draft")
-        synced.append((p_name, version))
+        result = sync_single_missing_prompt(project_root, manager, p_item)
+        if result is not None:
+            synced.append(result)
     return synced
 
 
@@ -581,17 +635,23 @@ def fetch_prompt_from_manager(
     Returns:
         Tupla (conteúdo, versão, sucesso).
     """
-    production_found = False
-    content = ""
-    version = 0
     try:
         content, version = manager.fetch_prompt(prompt_name, label="production")
-        production_found = True
-    except PromptManagementError:
-        production_found = False
-
-    if production_found:
         return content, version, True
+    except PromptManagementError:
+        pass
+
+    try:
+        content, version = manager.fetch_prompt(prompt_name, label="draft")
+        return content, version, True
+    except PromptManagementError:
+        pass
+
+    try:
+        content, version = manager.fetch_prompt(prompt_name, label="latest")
+        return content, version, True
+    except PromptManagementError:
+        pass
 
     try:
         content, version = manager.fetch_prompt(prompt_name)
