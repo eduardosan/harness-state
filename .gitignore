@@ -11,3 +11,14 @@ build/
 
 # Valores de infraestrutura locais (NUNCA versionar)
 local.mk
+
+# Harness & 12-Factor config isolation
+.harness/config.yaml
+.harness/*.yaml
+.harness/*.yml
+.harness/*.md
+.harness/hooks/
+.harness/sensors/
+.env
+.env.*
+*.env

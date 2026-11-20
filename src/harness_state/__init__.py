@@ -6,12 +6,27 @@ from harness_state.client import (
     StateStore,
     StateStoreProtocol,
 )
-from harness_state.models import CICDViolation, SpecRun, SubTask, TaskState
+from harness_state.models import (
+    CapabilitySyncResult,
+    CICDViolation,
+    RevisionType,
+    SpecEvolutionPlan,
+    SpecMatch,
+    SpecRevision,
+    SpecRun,
+    SubTask,
+    TaskState,
+)
 
 __all__ = [
     "CICDViolation",
+    "CapabilitySyncResult",
     "InMemoryStateStore",
+    "RevisionType",
     "Settings",
+    "SpecEvolutionPlan",
+    "SpecMatch",
+    "SpecRevision",
     "SpecRun",
     "StateStore",
     "StateStoreProtocol",

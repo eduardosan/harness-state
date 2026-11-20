@@ -7,7 +7,12 @@ from typing import Any
 
 import yaml
 
-from harness_state.models import SpecRun, SubTask, TaskState
+from harness_state.capabilities import (
+    BusinessCapability,
+    load_business_capability,
+    save_business_capability,
+)
+from harness_state.models import CapabilitySyncResult, SpecRun, SubTask, TaskState
 from harness_state.sensors.prompt_sensor import discover_prompts_in_repository
 from harness_state.workspace import find_manifest_path
 
@@ -504,17 +509,204 @@ def ensure_spec_has_prompts(
     return enriched_prompts
 
 
+UBIQUITOUS_TERM_PATTERN = re.compile(
+    r"(?:[-*]\s+|\b)\*\*([A-Za-z0-9_\s-]+):\*\*\s+([^\n]+)"
+)
+
+
+def find_capability_file(capability_id: str, search_roots: list[Path]) -> Path | None:
+    """Procura o arquivo capability.yaml correspondente à capability_id.
+
+    Args:
+        capability_id: Identificador da capability (ex: agent-workflow-platform).
+        search_roots: Lista de diretórios raiz para busca.
+
+    Returns:
+        Path para capability.yaml se encontrado ou None.
+    """
+    for root in search_roots:
+        cand = root / "capabilities" / capability_id / "capability.yaml"
+        if cand.is_file():
+            return cand
+        cand_hub = root / "harness-spec-hub" / "capabilities" / capability_id / "capability.yaml"
+        if cand_hub.is_file():
+            return cand_hub
+    return None
+
+
+def extract_ubiquitous_terms_from_markdown(text: str) -> dict[str, str]:
+    """Extrai termos da linguagem ubíqua e suas definições a partir do markdown da spec.
+
+    Args:
+        text: Corpo do documento da especificação técnica.
+
+    Returns:
+        Dicionário mapeando termo para definição.
+    """
+    terms: dict[str, str] = {}
+    for match in UBIQUITOUS_TERM_PATTERN.finditer(text):
+        term = match.group(1).strip()
+        defn = match.group(2).strip()
+        if term and defn and len(term) < 50:
+            terms[term] = defn
+    return terms
+
+
+def resolve_or_create_capability(
+    capability_id: str,
+    scope: str,
+    ws_root: Path,
+    search_dirs: list[Path],
+) -> tuple[BusinessCapability, Path]:
+    """Resolve o arquivo capability.yaml existente ou cria a instância base.
+
+    Args:
+        capability_id: Identificador da capability.
+        scope: Escopo declarado na spec (ex: platform).
+        ws_root: Raiz do workspace.
+        search_dirs: Diretórios candidatos de busca.
+
+    Returns:
+        Tupla (instância BusinessCapability, Path do arquivo).
+    """
+    capability_file = find_capability_file(capability_id, search_dirs)
+    if capability_file is not None:
+        return load_business_capability(capability_file), capability_file
+
+    target_dir = ws_root / "capabilities" / capability_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    new_file = target_dir / "capability.yaml"
+    cap = BusinessCapability(
+        version="1.0",
+        capability_id=capability_id,
+        name=capability_id.replace("-", " ").title(),
+        scope=scope,
+    )
+    return cap, new_file
+
+
+def update_capability_specs(
+    capability: BusinessCapability,
+    spec_id: str,
+    title: str,
+) -> list[str]:
+    """Atualiza a lista de specs na capability garantindo status APPROVED.
+
+    Args:
+        capability: Instância da capability a atualizar.
+        spec_id: Identificador da spec.
+        title: Título da spec.
+
+    Returns:
+        Lista com spec_id adicionado ou vazio se já existia.
+    """
+    existing_entries = [
+        s for s in capability.specs if isinstance(s, dict) and s.get("spec_id") == spec_id
+    ]
+    if not existing_entries:
+        capability.specs.append({"spec_id": spec_id, "title": title, "status": "APPROVED"})
+        return [spec_id]
+
+    for entry in existing_entries:
+        entry["status"] = "APPROVED"
+        entry["title"] = title
+    return []
+
+
+def update_capability_terms(
+    capability: BusinessCapability,
+    terms: dict[str, str],
+) -> list[str]:
+    """Adiciona novos termos extraídos à linguagem ubíqua da capability.
+
+    Args:
+        capability: Instância da capability a atualizar.
+        terms: Dicionário de termos e definições.
+
+    Returns:
+        Lista de novos termos adicionados.
+    """
+    added_terms: list[str] = []
+    for term, defn in terms.items():
+        if term not in capability.ubiquitous_language:
+            capability.ubiquitous_language[term] = defn
+            added_terms.append(term)
+    return added_terms
+
+
+def sync_capability_map_for_spec(
+    spec_file: Path,
+    author_agent: str = "antigravity",
+    workspace_root: Path | None = None,
+) -> CapabilitySyncResult:
+    """Sincroniza o mapa de capacidades (DDD) com base na especificação técnica aprovada.
+
+    Args:
+        spec_file: Arquivo Markdown da especificação técnica.
+        author_agent: Identificador do agente autor da spec.
+        workspace_root: Raiz opcional do workspace ou spec-hub.
+
+    Returns:
+        CapabilitySyncResult contendo resumo das adições e atualizações realizadas.
+    """
+    if not spec_file.is_file():
+        return CapabilitySyncResult(capability_id="", updated=False)
+
+    content = spec_file.read_text(encoding="utf-8")
+    frontmatter, body = extract_yaml_frontmatter(content)
+    if not frontmatter or not isinstance(frontmatter, dict):
+        return CapabilitySyncResult(capability_id="", updated=False)
+
+    capability_id = str(frontmatter.get("capability") or "").strip()
+    if not capability_id:
+        return CapabilitySyncResult(capability_id="", updated=False)
+
+    spec_id = str(frontmatter.get("spec_id") or spec_file.stem)
+    title = str(frontmatter.get("title") or spec_file.stem)
+    author = author_agent or str(frontmatter.get("author_agent") or "antigravity")
+    scope = str(frontmatter.get("scope") or "platform")
+
+    ws_root = workspace_root or spec_file.parent.parent
+    search_dirs = [ws_root, spec_file.parent.parent, Path(".")]
+
+    capability, capability_file = resolve_or_create_capability(
+        capability_id=capability_id,
+        scope=scope,
+        ws_root=ws_root,
+        search_dirs=search_dirs,
+    )
+
+    added_specs = update_capability_specs(capability, spec_id=spec_id, title=title)
+    terms = extract_ubiquitous_terms_from_markdown(body)
+    added_terms = update_capability_terms(capability, terms=terms)
+
+    save_business_capability(capability, capability_file)
+
+    return CapabilitySyncResult(
+        capability_id=capability_id,
+        updated=True,
+        added_terms=added_terms,
+        added_specs=added_specs or [spec_id],
+        sync_agent=author,
+        diff_summary=f"Sincronizada spec {spec_id} e {len(added_terms)} termos na capability {capability_id}",
+    )
+
+
 def approve_spec(
     spec_file: Path,
     workspace_root: Path | None = None,
     manifest_path: Path | None = None,
+    author_agent: str | None = None,
+    sync_capabilities: bool = True,
 ) -> bool:
-    """Aprova spec (Gate 2: APPROVED), enriquecendo prompts governados.
+    """Aprova spec (Gate 2: APPROVED), enriquecendo prompts governados e sincronizando capacidades.
 
     Args:
         spec_file: Caminho para o arquivo da especificação.
         workspace_root: Raiz opcional do workspace para autodescoberta de prompts.
         manifest_path: Caminho opcional do manifest.yaml.
+        author_agent: Identificador opcional do agente autor da spec.
+        sync_capabilities: Se True, executa a sincronização do mapa de capacidades.
 
     Returns:
         True se a transição foi realizada com sucesso, False caso o arquivo inexista.
@@ -539,6 +731,14 @@ def approve_spec(
         )
 
     spec_file.write_text(updated, encoding="utf-8")
+
+    if sync_capabilities:
+        sync_capability_map_for_spec(
+            spec_file=spec_file,
+            author_agent=author_agent or "antigravity",
+            workspace_root=ws_root,
+        )
+
     return True
 
 

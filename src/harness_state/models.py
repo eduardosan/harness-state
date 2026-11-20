@@ -85,6 +85,65 @@ class SubTask(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class RevisionType(StrEnum):
+    """Tipo de revisão aplicada à especificação técnica."""
+
+    MINOR_EVOLUTION = "MINOR_EVOLUTION"
+    MAJOR_BREAKING = "MAJOR_BREAKING"
+    PATCH_CORRECTION = "PATCH_CORRECTION"
+
+
+class SpecRevision(BaseModel):
+    """Registro imutável de uma revisão aplicada a uma spec existente."""
+
+    revision_id: str
+    spec_id: str
+    version: str
+    revision_type: RevisionType
+    author: str
+    instruction: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    frozen_task_ids: list[str] = Field(default_factory=list)
+    new_task_ids: list[str] = Field(default_factory=list)
+    modified_contracts: list[str] = Field(default_factory=list)
+
+
+class SpecMatch(BaseModel):
+    """Resultado da correspondência de uma spec existente durante o comando plan."""
+
+    spec_id: str
+    title: str
+    file_path: str
+    similarity_score: float
+    matched_capability: str = ""
+    relevance_summary: str = ""
+    recommended_action: str = "evolve"
+
+
+class CapabilitySyncResult(BaseModel):
+    """Resultado da sincronização do mapa de capacidades pós-aprovação."""
+
+    capability_id: str
+    updated: bool
+    added_terms: list[str] = Field(default_factory=list)
+    added_contracts: list[str] = Field(default_factory=list)
+    added_specs: list[str] = Field(default_factory=list)
+    sync_agent: str = ""
+    diff_summary: str = ""
+
+
+class SpecEvolutionPlan(BaseModel):
+    """Plano de evolução gerado a partir do diff semântico de uma spec."""
+
+    spec_id: str
+    current_version: str
+    target_version: str
+    frozen_tasks: list[SubTask]
+    tasks_to_execute: list[SubTask]
+    affected_repositories: list[str]
+    has_breaking_changes: bool = False
+
+
 class SpecRun(BaseModel):
     """Estado global de uma especificação no barramento central."""
 
@@ -103,6 +162,11 @@ class SpecRun(BaseModel):
     prompts: list[str] = Field(default_factory=list)
     hub_pr_number: int | None = None
     hub_pr_url: str | None = None
+    spec_version: str = "1.0.0"
+    author_agent: str = "antigravity"
+    author_model: str = ""
+    revisions: list[SpecRevision] = Field(default_factory=list)
+    capability_synced: bool = False
 
     def __len__(self) -> int:
         """Retorna o número total de subtarefas na especificação."""
@@ -238,3 +302,23 @@ class SpecRun(BaseModel):
             self.status = TaskState.READY
 
         return task
+
+    def apply_evolution(
+        self,
+        new_version: str,
+        revision: SpecRevision,
+        new_subtasks: list[SubTask],
+    ) -> None:
+        """Aplica uma evolução à spec, preservando tarefas concluídas como congeladas.
+
+        Args:
+            new_version: Nova versão SemVer da especificação.
+            revision: Instância imutável de SpecRevision.
+            new_subtasks: Lista de novas subtarefas a serem adicionadas ou atualizadas.
+        """
+        self.spec_version = new_version
+        self.revisions.append(revision)
+        for task in new_subtasks:
+            self.tasks[task.id] = task
+        if self.status in (TaskState.READY, TaskState.APPROVED):
+            self.status = TaskState.IN_PROGRESS
