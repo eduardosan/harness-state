@@ -105,7 +105,7 @@ def resolve_primary_judge_model(model_name: str = "") -> str:
         model_name
         or os.environ.get("JUDGE_MODEL", "")
         or os.environ.get("LLM_JUDGE_MODEL", "")
-        or os.environ.get("LLM_JUDGE_MODEL", "")
+        or os.environ.get("HARNESS_JUDGE_MODEL", "")
         or os.environ.get("LLM_MODEL", "")
         or JUDGE_DEFAULT_MODEL
     )
@@ -1376,6 +1376,167 @@ def evaluate_spec_diff(
     return build_judge_error_evaluation(effective_spec_id, fallback_name, last_error)
 
 
+def check_language_diff_preconditions(
+    diffs_path: Path,
+    effective_id: str,
+) -> tuple[str, JudgeEvaluation | None]:
+    """Verifica existência e conteúdo inicial do arquivo de diffs.
+
+    Args:
+        diffs_path: Caminho do arquivo de diffs.
+        effective_id: Identificador da especificação.
+
+    Returns:
+        Tupla com o conteúdo do diff (se válido) ou a JudgeEvaluation de aprovação/rejeição.
+    """
+    if not diffs_path.is_file():
+        return "", JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=0,
+            status="REJECTED",
+            summary=f"Arquivo de diffs nao encontrado: {diffs_path}",
+            violations=["Arquivo de diffs consolidado inexistente."],
+            recommendations=["Verificar coleta de PRs e diffs dos repositórios."],
+        )
+
+    content = diffs_path.read_text(encoding="utf-8")
+    if not content.strip():
+        return "", JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=100,
+            status="APPROVED",
+            summary="Diff vazio: sem alterações na linguagem para avaliar.",
+            violations=[],
+            recommendations=[],
+        )
+    return content, None
+
+
+def check_python_diff_content(
+    diffs_content: str,
+    effective_id: str,
+) -> tuple[str, str, JudgeEvaluation | None]:
+    """Verifica se há diffs Python e diretrizes fluentes ativadas.
+
+    Args:
+        diffs_content: Conteúdo completo dos diffs.
+        effective_id: Identificador da especificação.
+
+    Returns:
+        Tupla com python_diff, fluent_guidelines e JudgeEvaluation caso seja skip aprovado.
+    """
+    python_diff = extract_python_diff_for_fluent_check(diffs_content)
+    if not python_diff.strip():
+        return "", "", JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=100,
+            status="APPROVED",
+            summary="Sem arquivos Python modificados no diff para avaliar.",
+            violations=[],
+            recommendations=[],
+        )
+
+    fluent_guidelines = collect_fluent_python_guidelines(diffs_content)
+    if not fluent_guidelines.strip():
+        return "", "", JudgeEvaluation(
+            spec_id=effective_id,
+            compliance_score=100,
+            status="APPROVED",
+            summary="Nenhuma diretriz de Python Fluente ativada para o diff.",
+            violations=[],
+            recommendations=[],
+        )
+    return python_diff, fluent_guidelines, None
+
+
+def execute_python_fluent_stage(
+    stage_model: Any,
+    fluent_guidelines: str,
+    python_diff: str,
+    effective_id: str,
+) -> JudgeEvaluation:
+    """Executa a avaliação de um estágio com o modelo fornecido.
+
+    Args:
+        stage_model: Instância do modelo juiz.
+        fluent_guidelines: Diretrizes normativas da linguagem.
+        python_diff: Diff de código Python.
+        effective_id: Identificador da especificação.
+
+    Returns:
+        JudgeEvaluation consolidada para o estágio.
+    """
+    fluent_score, fluent_success, fluent_reason = evaluate_fluent_python_stage(
+        judge_model=stage_model,
+        fluent_guidelines=fluent_guidelines,
+        python_diff=python_diff,
+    )
+    is_approved = bool(fluent_success and fluent_score >= 90)
+    status = "APPROVED" if is_approved else "REJECTED"
+    violations = [] if is_approved else [f"[Python Fluente] {fluent_reason}"]
+    recommendations = (
+        ["Implementacao atende integralmente as diretrizes da linguagem."]
+        if is_approved
+        else ["Refatorar anti-padroes de Python conforme as specs ativadas."]
+    )
+    return JudgeEvaluation(
+        spec_id=effective_id,
+        compliance_score=fluent_score,
+        status=status,
+        summary=fluent_reason,
+        violations=violations,
+        recommendations=recommendations,
+    )
+
+
+def run_python_stages_with_fallback(
+    stages: list[tuple[str, Any]],
+    fluent_guidelines: str,
+    python_diff: str,
+    effective_id: str,
+    primary_name: str,
+    fallback_name: str,
+) -> JudgeEvaluation:
+    """Executa a bateria de estágios de Python com fallback entre tiers de modelo.
+
+    Args:
+        stages: Lista de pares (nome_modelo, instancia_modelo).
+        fluent_guidelines: Diretrizes coletadas.
+        python_diff: Diff Python sanitizado.
+        effective_id: Identificador da especificação.
+        primary_name: Nome do modelo primário.
+        fallback_name: Nome do modelo de fallback.
+
+    Returns:
+        JudgeEvaluation resultante da avaliação ou erro tratado.
+    """
+    last_error: Exception | None = None
+    for stage_index, (_, stage_model) in enumerate(stages):
+        try:
+            return execute_python_fluent_stage(
+                stage_model, fluent_guidelines, python_diff, effective_id
+            )
+        except Exception as stage_error:
+            LOGGER.warning("Estagio do juiz de linguagem falhou; tentando proximo tier")
+            LOGGER.debug("Detalhe da falha de linguagem", exc_info=True)
+            last_error = stage_error
+            if stage_index < len(stages) - 1:
+                print(
+                    f"[Language Judge Fallback] Recursos esgotados no tier padrao "
+                    f"({primary_name}): {stage_error}. "
+                    f"Reavaliando com {fallback_name}...",
+                    file=sys.stderr,
+                )
+
+    if last_error is None:
+        last_error = RuntimeError(
+            f"Avaliação da linguagem esgotou os tiers ({primary_name} → {fallback_name}) "
+            "sem erro capturado."
+        )
+    report_judge_failure(effective_id, last_error)
+    return build_judge_error_evaluation(effective_id, fallback_name, last_error)
+
+
 def evaluate_language_diff(
     diffs_path: Path,
     language: str = "python",
@@ -1398,126 +1559,58 @@ def evaluate_language_diff(
 
     Returns:
         Resultado estruturado do julgamento da linguagem em `JudgeEvaluation`.
+
+    Raises:
+        ValueError: Caso a linguagem especificada não seja suportada.
     """
     effective_id = spec_id if spec_id else f"LANG-{language.upper()}"
+    diffs_content, early_eval = check_language_diff_preconditions(
+        diffs_path, effective_id
+    )
+    if early_eval is not None:
+        return early_eval
 
-    if not diffs_path.is_file():
-        return JudgeEvaluation(
-            spec_id=effective_id,
-            compliance_score=0,
-            status="REJECTED",
-            summary=f"Arquivo de diffs nao encontrado: {diffs_path}",
-            violations=["Arquivo de diffs consolidado inexistente."],
-            recommendations=["Verificar coleta de PRs e diffs dos repositórios."],
+    if language.lower() != "python":
+        raise ValueError(f"Linguagem não suportada para avaliação: {language}")
+
+    python_diff, fluent_guidelines, py_eval = check_python_diff_content(
+        diffs_content, effective_id
+    )
+    if py_eval is not None:
+        return py_eval
+
+    primary_name = resolve_primary_judge_model(model)
+    fallback_name = fallback_model or resolve_fallback_judge_model()
+    stages: list[tuple[str, Any]] = [
+        (
+            primary_name,
+            build_judge_model(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model,
+            ),
+        )
+    ]
+    if fallback_name != primary_name:
+        stages.append(
+            (
+                fallback_name,
+                build_judge_model(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model_name=fallback_name,
+                ),
+            )
         )
 
-    diffs_content = diffs_path.read_text(encoding="utf-8")
-    if not diffs_content.strip():
-        return JudgeEvaluation(
-            spec_id=effective_id,
-            compliance_score=100,
-            status="APPROVED",
-            summary="Diff vazio: sem alterações na linguagem para avaliar.",
-            violations=[],
-            recommendations=[],
-        )
-
-    if language.lower() == "python":
-        python_diff = extract_python_diff_for_fluent_check(diffs_content)
-        if not python_diff.strip():
-            return JudgeEvaluation(
-                spec_id=effective_id,
-                compliance_score=100,
-                status="APPROVED",
-                summary="Sem arquivos Python modificados no diff para avaliar.",
-                violations=[],
-                recommendations=[],
-            )
-
-        fluent_guidelines = collect_fluent_python_guidelines(diffs_content)
-        if not fluent_guidelines.strip():
-            return JudgeEvaluation(
-                spec_id=effective_id,
-                compliance_score=100,
-                status="APPROVED",
-                summary="Nenhuma diretriz de Python Fluente ativada para o diff.",
-                violations=[],
-                recommendations=[],
-            )
-
-        judge_model = build_judge_model(
-            base_url=base_url,
-            api_key=api_key,
-            model_name=model,
-        )
-        primary_name = resolve_primary_judge_model(model)
-        fallback_name = fallback_model or resolve_fallback_judge_model()
-        stages: list[tuple[str, Any]] = [(primary_name, judge_model)]
-        if fallback_name != primary_name:
-            stages.append(
-                (
-                    fallback_name,
-                    build_judge_model(
-                        base_url=base_url,
-                        api_key=api_key,
-                        model_name=fallback_name,
-                    ),
-                )
-            )
-
-        last_error: Exception | None = None
-        for stage_index, (stage_name, stage_model) in enumerate(stages):
-            try:
-                fluent_score, fluent_success, fluent_reason = (
-                    evaluate_fluent_python_stage(
-                        judge_model=stage_model,
-                        fluent_guidelines=fluent_guidelines,
-                        python_diff=python_diff,
-                    )
-                )
-                is_approved = bool(fluent_success and fluent_score >= 90)
-                status = "APPROVED" if is_approved else "REJECTED"
-                violations = (
-                    [] if is_approved else [f"[Python Fluente] {fluent_reason}"]
-                )
-                recommendations = (
-                    ["Implementacao atende integralmente as diretrizes da linguagem."]
-                    if is_approved
-                    else [
-                        "Refatorar anti-padroes de Python conforme as specs ativadas."
-                    ]
-                )
-                return JudgeEvaluation(
-                    spec_id=effective_id,
-                    compliance_score=fluent_score,
-                    status=status,
-                    summary=fluent_reason,
-                    violations=violations,
-                    recommendations=recommendations,
-                )
-            except Exception as stage_error:
-                LOGGER.warning(
-                    "Estagio do juiz de linguagem falhou; tentando proximo tier"
-                )
-                LOGGER.debug("Detalhe da falha de linguagem", exc_info=True)
-                last_error = stage_error
-                if stage_index < len(stages) - 1:
-                    print(
-                        f"[Language Judge Fallback] Recursos esgotados no tier padrao "
-                        f"({primary_name}): {stage_error}. "
-                        f"Reavaliando com {fallback_name}...",
-                        file=sys.stderr,
-                    )
-
-        if last_error is None:
-            last_error = RuntimeError(
-                f"Avaliação da linguagem esgotou os tiers ({primary_name} → {fallback_name}) "
-                "sem erro capturado."
-            )
-        report_judge_failure(effective_id, last_error)
-        return build_judge_error_evaluation(effective_id, fallback_name, last_error)
-
-    raise ValueError(f"Linguagem não suportada para avaliação: {language}")
+    return run_python_stages_with_fallback(
+        stages=stages,
+        fluent_guidelines=fluent_guidelines,
+        python_diff=python_diff,
+        effective_id=effective_id,
+        primary_name=primary_name,
+        fallback_name=fallback_name,
+    )
 
 
 def report_judge_failure(spec_id: str, error: Exception) -> None:

@@ -1,5 +1,7 @@
 """Módulo de ciclo de vida, decomposição (fanout) e roteamento de especificações."""
 
+from harness_state.spec.discovery import SpecDiscoveryEngine
+from harness_state.spec.evolution import SpecEvolutionEngine
 from harness_state.spec.fanout import (
     SpecSyncOutcome,
     fanout_all_repository_specs,
@@ -22,6 +24,7 @@ from harness_state.spec.lifecycle import (
     resolve_spec_file_path,
     resolve_specs_directory,
     slugify,
+    sync_capability_map_for_spec,
     validate_spec_feasibility,
 )
 from harness_state.spec.router import (
@@ -41,6 +44,8 @@ from harness_state.spec.router import (
 __all__ = [
     "SPEC_PATTERNS",
     "RoutingResult",
+    "SpecDiscoveryEngine",
+    "SpecEvolutionEngine",
     "SpecSyncOutcome",
     "approve_spec",
     "build_spec_refine_prompt",
@@ -68,6 +73,7 @@ __all__ = [
     "route_diff",
     "save_repo_spec",
     "slugify",
+    "sync_capability_map_for_spec",
     "sync_spoke_spec_to_hub",
     "validate_spec_feasibility",
 ]

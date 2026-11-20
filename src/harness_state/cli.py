@@ -12,6 +12,9 @@ from rich.table import Table
 
 from harness_state.client import StateStore, StateStoreProtocol
 from harness_state.models import SpecRun, SubTask, TaskState
+from harness_state.spec.discovery import SpecDiscoveryEngine
+from harness_state.spec.evolution import SpecEvolutionEngine
+from harness_state.spec.lifecycle import approve_spec, resolve_spec_file_path
 from harness_state.spec_parser import parse_spec_tasks
 
 console = Console()
@@ -283,6 +286,102 @@ async def run_update(
         )
 
 
+def check_plan_spec_discovery(
+    title: str,
+    specs_dir: Path | None,
+    target_capability: str | None = None,
+) -> bool:
+    """Executa a descoberta prévia no comando plan e avisa se spec correlata existir.
+
+    Args:
+        title: Título ou prompt proposto no plan.
+        specs_dir: Diretório opcional de especificações.
+        target_capability: Capability alvo informada ou None.
+
+    Returns:
+        True se uma spec existente com alta similaridade foi identificada (interrompe criação).
+    """
+    target_dir = specs_dir or Path("specs")
+    if not target_dir.is_dir():
+        return False
+    engine = SpecDiscoveryEngine(specs_dir=target_dir)
+    matches = engine.discover_related_specs(
+        title, target_capability=target_capability, threshold=0.6
+    )
+    if not matches:
+        return False
+    top = matches[0]
+    if top.similarity_score < 0.75:
+        return False
+
+    console.print(
+        f"\n[bold yellow]ℹ Spec existente identificada:[/bold yellow] "
+        f"[bold cyan]{top.spec_id}[/bold cyan] - {top.title} "
+        f"(similaridade: {top.similarity_score})"
+    )
+    console.print(
+        f"Sugestão: execute '[bold green]harness spec update {top.spec_id} -p \"...\"[/bold green]' "
+        f"para evoluir a spec existente em vez de duplicar.\n"
+        f"[dim](Use --force-new para forçar a criação de uma nova especificação)[/dim]"
+    )
+    return True
+
+
+def merge_plan_subtasks(
+    existing: SpecRun,
+    target_title: str,
+    parsed_subtasks: dict[str, SubTask],
+) -> None:
+    """Mescla subtarefas de um novo plano em uma especificação existente.
+
+    Args:
+        existing: Instância de SpecRun existente.
+        target_title: Novo título ou atualizado.
+        parsed_subtasks: Dicionário de subtarefas parsed.
+    """
+    existing.title = target_title
+    for tid, task in parsed_subtasks.items():
+        if tid not in existing.tasks:
+            existing.tasks[tid] = task
+        else:
+            existing.tasks[tid].wave = task.wave
+            existing.tasks[tid].depends_on = task.depends_on
+
+
+def resolve_plan_targets(
+    spec_file: str | None,
+    manifest_file: str | None,
+    spec_id: str | None,
+    title: str | None,
+) -> tuple[str | None, str, dict[str, SubTask]] | None:
+    """Resolve identificador, título e subtarefas a partir dos parâmetros de plan.
+
+    Args:
+        spec_file: Caminho opcional do arquivo SPEC.md.
+        manifest_file: Caminho opcional do manifest.yaml.
+        spec_id: Identificador opcional da spec.
+        title: Título opcional da spec.
+
+    Returns:
+        Tupla (target_spec_id, target_title, parsed_subtasks) ou None se arquivo inválido.
+    """
+    target_spec_id = spec_id
+    target_title = title or "Nova Especificação"
+    parsed_subtasks: dict[str, SubTask] = {}
+
+    if spec_file is not None:
+        file_context = resolve_spec_file_context(
+            spec_file=spec_file, manifest_file=manifest_file
+        )
+        if file_context is None:
+            return None
+        _target_manifest, parsed_id, parsed_title, parsed_subtasks = file_context
+        target_spec_id = target_spec_id or parsed_id
+        target_title = title or parsed_title
+
+    return target_spec_id, target_title, parsed_subtasks
+
+
 async def run_plan(
     spec_file: str | None = None,
     spec_id: str | None = None,
@@ -290,6 +389,8 @@ async def run_plan(
     author: str = "local-dev",
     manifest_file: str | None = None,
     store: StateStoreProtocol | None = None,
+    specs_dir: Path | None = None,
+    force_new: bool = False,
 ) -> None:
     """Planeja ou registra uma especificação a partir de parâmetros ou arquivo markdown.
 
@@ -300,20 +401,26 @@ async def run_plan(
         author: Autor da especificação.
         manifest_file: Caminho opcional para o manifest.yaml com grafo de dependências.
         store: Instância opcional de persistência.
+        specs_dir: Diretório opcional de especificações.
+        force_new: Se True, ignora sugestão de evolução de spec existente.
     """
-    target_spec_id = spec_id
-    target_title = title or "Nova Especificação"
+    if (
+        title
+        and not force_new
+        and spec_file is None
+        and check_plan_spec_discovery(title=title, specs_dir=specs_dir)
+    ):
+        return
 
-    parsed_subtasks: dict[str, SubTask] = {}
-    if spec_file is not None:
-        file_context = resolve_spec_file_context(
-            spec_file=spec_file, manifest_file=manifest_file
-        )
-        if file_context is None:
-            return
-        _target_manifest, parsed_id, parsed_title, parsed_subtasks = file_context
-        target_spec_id = target_spec_id or parsed_id
-        target_title = title or parsed_title
+    targets = resolve_plan_targets(
+        spec_file=spec_file,
+        manifest_file=manifest_file,
+        spec_id=spec_id,
+        title=title,
+    )
+    if targets is None:
+        return
+    target_spec_id, target_title, parsed_subtasks = targets
 
     if not target_spec_id:
         console.print("[bold red]Erro:[/bold red] Identificador da spec não informado.")
@@ -323,13 +430,7 @@ async def run_plan(
     async with active_store:
         existing = await active_store.get_spec(target_spec_id)
         if existing is not None:
-            existing.title = target_title
-            for tid, task in parsed_subtasks.items():
-                if tid not in existing.tasks:
-                    existing.tasks[tid] = task
-                else:
-                    existing.tasks[tid].wave = task.wave
-                    existing.tasks[tid].depends_on = task.depends_on
+            merge_plan_subtasks(existing, target_title, parsed_subtasks)
             await active_store.save_spec(existing)
             console.print(
                 f"[bold green]✓[/bold green] Plano para [bold cyan]{target_spec_id}[/bold cyan] "
@@ -406,6 +507,18 @@ def list_available_plugins() -> list[Any]:
     return list(entry_points(group="harness.plugins"))
 
 
+def merge_plugin_spec_commands(target_group: click.Group, plugin_spec: click.Group) -> None:
+    """Mescla subcomandos de spec providos por um plugin sem sobrescrever os públicos.
+
+    Args:
+        target_group: Grupo público `spec`.
+        plugin_spec: Grupo `spec` fornecido pelo plugin.
+    """
+    for sub_name, sub_cmd in plugin_spec.commands.items():
+        if sub_name not in target_group.commands:
+            target_group.add_command(sub_cmd, name=sub_name)
+
+
 def load_plugins_into(group: click.Group) -> None:
     """Carrega plugins externos dentro do grupo da CLI pública.
 
@@ -431,6 +544,14 @@ def load_plugins_into(group: click.Group) -> None:
             )
             continue
         for name, command in candidate.commands.items():
+            existing = group.commands.get(name)
+            if (
+                name == "spec"
+                and isinstance(existing, click.Group)
+                and isinstance(command, click.Group)
+            ):
+                merge_plugin_spec_commands(existing, command)
+                continue
             if name in group.commands:
                 click.echo(
                     f"[harness] plugin '{entry_point.name}' tentou sobrescrever "
@@ -560,12 +681,26 @@ def update(
 @click.option("--spec-id", default=None, help="Identificador único da spec")
 @click.option("--title", default=None, help="Título descritivo da funcionalidade")
 @click.option("--author", default="local-dev", help="Autor da especificação")
+@click.option(
+    "--specs-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Diretório de especificações",
+)
+@click.option(
+    "--force-new",
+    is_flag=True,
+    default=False,
+    help="Força criação de nova spec ignorando correspondência existente",
+)
 def plan(
     spec_file: str | None,
     manifest_file: str | None,
     spec_id: str | None,
     title: str | None,
     author: str,
+    specs_dir: Path | None = None,
+    force_new: bool = False,
 ) -> None:
     """Grava ou atualiza uma nova spec e suas sub-tarefas no barramento central."""
     asyncio.run(
@@ -575,6 +710,8 @@ def plan(
             spec_id=spec_id,
             title=title,
             author=author,
+            specs_dir=specs_dir,
+            force_new=force_new,
         )
     )
 
@@ -584,6 +721,194 @@ def plan(
 def resume(spec_id: str) -> None:
     """Retoma o trabalho no ambiente atual identificando a próxima tarefa pendente."""
     asyncio.run(run_resume(spec_id=spec_id))
+
+
+async def save_spec_for_cli(spec: SpecRun, active_store: StateStoreProtocol) -> None:
+    """Salva a especificação no StateStore ativo.
+
+    Args:
+        spec: Instância do SpecRun a ser persistida.
+        active_store: Store de persistência.
+    """
+    async with active_store:
+        await active_store.save_spec(spec)
+
+
+def run_spec_update(
+    spec_target: str,
+    user_prompt: str,
+    author: str = "local-dev",
+    specs_dir: Path | None = None,
+    store: StateStoreProtocol | None = None,
+) -> None:
+    """Evolui uma especificação existente no spec-hub e no barramento central.
+
+    Args:
+        spec_target: Caminho ou identificador da especificação (ex: SPEC-008).
+        user_prompt: Instrução do operador descrevendo a evolução.
+        author: Autor da revisão.
+        specs_dir: Diretório opcional de specs.
+        store: Store opcional para persistência de estado.
+    """
+    resolved_dir = specs_dir or Path("specs")
+    resolved_file = resolve_spec_file_path(spec_target, specs_dir=resolved_dir)
+    if resolved_file is None or not resolved_file.is_file():
+        console.print(f"[bold red]Erro:[/bold red] Especificação {spec_target} não encontrada.")
+        return
+
+    engine = SpecEvolutionEngine(spec_hub_dir=resolved_dir.parent)
+    active_store = store or StateStore()
+    current_run: SpecRun | None = None
+    try:
+        current_run = asyncio.run(get_spec_for_cli(resolved_file.stem, active_store))
+    except (OSError, RuntimeError, ValueError):
+        current_run = None
+
+    plan = engine.analyze_spec_evolution(
+        spec_path=resolved_file,
+        instruction=user_prompt,
+        current_run=current_run,
+    )
+
+    if plan.has_breaking_changes:
+        console.print(
+            "[bold yellow]⚠️  Aviso: Breaking change detectada em contratos de tarefas congeladas![/bold yellow]"
+        )
+        console.print(f"Versão incrementada para MAJOR: [bold red]{plan.target_version}[/bold red]")
+
+    revision = engine.apply_evolution_to_spec(
+        spec_path=resolved_file,
+        plan=plan,
+        author=author,
+        instruction=user_prompt,
+    )
+
+    if current_run is not None:
+        current_run.apply_evolution(plan.target_version, revision, plan.tasks_to_execute)
+        asyncio.run(save_spec_for_cli(current_run, active_store))
+
+    console.print(
+        f"[bold green]✓[/bold green] Spec [bold cyan]{plan.spec_id}[/bold cyan] "
+        f"evoluída para versão [bold cyan]{plan.target_version}[/bold cyan] "
+        f"({len(plan.frozen_tasks)} congeladas, {len(plan.tasks_to_execute)} a executar)."
+    )
+
+
+@main.group(name="spec")
+def spec_group() -> None:
+    """Comandos para gerenciamento do ciclo de vida de especificações (SDD)."""
+
+
+@spec_group.command(name="update")
+@click.argument("spec_target")
+@click.option("--prompt", "-p", "user_prompt", required=True, help="Instrução de evolução da spec")
+@click.option("--author", default="local-dev", help="Autor da evolução")
+@click.option(
+    "--specs-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Diretório de especificações",
+)
+def spec_update_cmd(
+    spec_target: str,
+    user_prompt: str,
+    author: str,
+    specs_dir: Path | None,
+) -> None:
+    """Evolui uma especificação existente preservando tarefas concluídas como congeladas."""
+    run_spec_update(
+        spec_target=spec_target,
+        user_prompt=user_prompt,
+        author=author,
+        specs_dir=specs_dir,
+    )
+
+
+@spec_group.command(name="plan")
+@click.option(
+    "--spec",
+    "spec_file",
+    type=click.Path(),
+    default=None,
+    help="Caminho do arquivo de especificação",
+)
+@click.option(
+    "--manifest",
+    "manifest_file",
+    type=click.Path(),
+    default=None,
+    help="Caminho do arquivo manifest.yaml",
+)
+@click.option("--spec-id", default=None, help="Identificador único da spec")
+@click.option("--title", default=None, help="Título descritivo da funcionalidade")
+@click.option("--author", default="local-dev", help="Autor da especificação")
+@click.option(
+    "--specs-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Diretório de especificações",
+)
+@click.option(
+    "--force-new",
+    is_flag=True,
+    default=False,
+    help="Força criação de nova spec ignorando correspondência existente",
+)
+def spec_plan_cmd(
+    spec_file: str | None,
+    manifest_file: str | None,
+    spec_id: str | None,
+    title: str | None,
+    author: str,
+    specs_dir: Path | None,
+    force_new: bool,
+) -> None:
+    """Planeja ou registra uma especificação no barramento central."""
+    asyncio.run(
+        run_plan(
+            spec_file=spec_file,
+            manifest_file=manifest_file,
+            spec_id=spec_id,
+            title=title,
+            author=author,
+            specs_dir=specs_dir,
+            force_new=force_new,
+        )
+    )
+
+
+@spec_group.command(name="status")
+@click.argument("spec_id")
+def spec_status_cmd(spec_id: str) -> None:
+    """Exibe o progresso atual de uma especificação e suas tarefas."""
+    asyncio.run(run_status(spec_id=spec_id))
+
+
+@spec_group.command(name="approve")
+@click.argument("spec_target")
+@click.option("--author", default="antigravity", help="Agente autor da spec")
+@click.option(
+    "--specs-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Diretório de especificações",
+)
+def spec_approve_cmd(
+    spec_target: str,
+    author: str,
+    specs_dir: Path | None,
+) -> None:
+    """Aprova formalmente uma especificação e sincroniza o mapa de capacidades (Gate 2)."""
+    resolved_file = resolve_spec_file_path(spec_target, specs_dir=specs_dir)
+    if resolved_file is None or not resolved_file.is_file():
+        console.print(f"[bold red]Erro:[/bold red] Especificação {spec_target} não encontrada.")
+        return
+    success = approve_spec(resolved_file, author_agent=author)
+    if success:
+        console.print(
+            f"[bold green]✓[/bold green] Spec [bold cyan]{spec_target}[/bold cyan] "
+            "aprovada e mapa de capacidades sincronizado."
+        )
 
 
 def run_get_spec(

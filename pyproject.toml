@@ -5,7 +5,7 @@ description = "Cliente oficial de State Tracking para a Plataforma de Harness SD
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [
-    { name = "Eduardo F. Santos", email = "eduardo@for.mat.br" }
+    { name = "Eduardo F. Santos", email = "eduardo@example.com" }
 ]
 dependencies = [
     "pydantic>=2.7.0",

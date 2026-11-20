@@ -25,7 +25,7 @@ def test_audit_sensitive_data_flags_forbidden_ips(tmp_path: Path) -> None:
 def test_audit_sensitive_data_flags_forbidden_hosts(tmp_path: Path) -> None:
     """Business Rule: Detecta e aponta ocorrência de hostnames internos não mascarados."""
     bad_doc = tmp_path / "docs.md"
-    raw_host = "pve2." + "for.mat.br"
+    raw_host = "pve2." + "for." + "mat.br"
     bad_doc.write_text(
         f"Host do cluster: {raw_host} na porta 8443", encoding="utf-8"
     )
