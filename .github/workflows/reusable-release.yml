@@ -144,26 +144,3 @@ jobs:
             ARTIFACTS="dist/*"
           fi
           gh release create "$TAG" $ARTIFACTS --verify-tag --title "$TAG" --generate-notes
-
-      - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao flywheel)
-        if: ${{ secrets.BOT_APP_ID != '' && secrets.BOT_PRIVATE_KEY != '' }}
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-          owner: eduardosan
-
-      - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
-        if: ${{ steps.app-token.outputs.token != '' }}
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ needs.release-candidate.outputs.tag }}
-          SHA: ${{ github.sha }}
-        run: |
-          gh api "repos/eduardosan/agentic-flywheel/dispatches" \
-            -X POST \
-            -f event_type=core-released \
-            -f "client_payload[version]=${TAG#v}" \
-            -f "client_payload[conclusion]=success" \
-            -f "client_payload[eval_sha]=${SHA}"
