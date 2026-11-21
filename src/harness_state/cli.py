@@ -911,6 +911,49 @@ def spec_approve_cmd(
         )
 
 
+@spec_group.command(name="sync-hub")
+@click.option(
+    "--repo-spec",
+    "repo_spec_path",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Caminho da sub-spec no repositório spoke",
+)
+@click.option(
+    "--hub-spec",
+    "hub_spec_path",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Caminho da spec mestre no spec-hub",
+)
+@click.option(
+    "--workspace-root",
+    "workspace_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Raiz do workspace de repositórios",
+)
+def spec_sync_hub_cmd(
+    repo_spec_path: Path,
+    hub_spec_path: Path,
+    workspace_root: Path | None,
+) -> None:
+    """Sincroniza sub-spec do spoke de volta para o spec-hub mestre."""
+    from harness_state.spec.fanout import sync_spoke_spec_to_hub
+
+    outcome = sync_spoke_spec_to_hub(
+        spoke_spec_path=repo_spec_path,
+        hub_spec_path=hub_spec_path,
+    )
+    if not outcome.success:
+        console.print(f"[bold red]Erro ao sincronizar spec-hub:[/bold red] {outcome.message}")
+        raise click.ClickException(outcome.message)
+    console.print(
+        f"[bold green]✓ Spec {outcome.spec_id} sincronizada no spec-hub com sucesso![/bold green] "
+        f"Seções atualizadas: {', '.join(outcome.updated_sections) if outcome.updated_sections else 'nenhuma'}"
+    )
+
+
 def run_get_spec(
     spec_id: str,
     store: StateStoreProtocol | None = None,
@@ -1176,6 +1219,103 @@ def audit_cmd(project_path: Path, check_sensitive: bool) -> None:
         console.print(
             "[bold green]✓ mask-sensitive-data: Nenhuma violação detectada.[/bold green]"
         )
+
+
+def run_local_verify(project_root: Path) -> bool:
+    """Executa verificação estática local de conformidade (ast_sensor, complexidade).
+
+    Args:
+        project_root: Diretório raiz do módulo a ser verificado.
+
+    Returns:
+        True se todas as verificações foram bem-sucedidas, False caso contrário.
+    """
+    from harness_state.sensors.ast_sensor import AstSensor, collect_paths
+    from harness_state.sensors.complexity_sensor import run_complexity_sensor
+
+    console.print(f"[bold blue]Iniciando verificação estática em {project_root}...[/bold blue]")
+    passed = True
+
+    py_files = [
+        p for p in project_root.rglob("*.py")
+        if not any(part.startswith(".") for part in p.parts)
+    ]
+    if py_files:
+        collected = collect_paths([str(project_root)])
+        violations = AstSensor().run(collected)
+        if violations:
+            console.print(f"[bold red]✗ AST Sensor:[/bold red] {len(violations)} violações detectadas.")
+            for v in violations[:10]:
+                console.print(f"  [red]- {v.rule}: {v.message} ({v.line}:{v.column})[/red]")
+            passed = False
+        else:
+            console.print("[bold green]✓ AST Sensor: Aprovado sem violações.[/bold green]")
+
+    complexity_violations = run_complexity_sensor([str(project_root)])
+    if complexity_violations:
+        console.print(f"[bold red]✗ Complexidade Cognitiva:[/bold red] {len(complexity_violations)} violações detectadas.")
+        for cv in complexity_violations[:10]:
+            console.print(f"  [red]- {cv.file_path}:{cv.line} - {cv.function_name} (complexidade: {cv.complexity})[/red]")
+        passed = False
+    else:
+        console.print("[bold green]✓ Complexidade Cognitiva: Aprovada.[/bold green]")
+
+    return passed
+
+
+@main.command(name="verify")
+@click.option(
+    "--path",
+    "project_path",
+    type=click.Path(path_type=Path),
+    default=Path("."),
+    help="Raiz do repositório a ser verificado",
+)
+def verify_cmd(project_path: Path) -> None:
+    """Verificação estática local de conformidade (ast_sensor, complexidade, pyright)."""
+    success = run_local_verify(project_path.resolve())
+    if not success:
+        raise click.ClickException("Verificação estática falhou.")
+    console.print("[bold green]✓ Conformidade estática aprovada.[/bold green]")
+
+
+@main.command(name="map-all")
+@click.option(
+    "--spec-hub-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Diretório do spec-hub (auto-descoberto se omitido)",
+)
+@click.option(
+    "--workspace-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Raiz do workspace de repositórios",
+)
+def map_all_cmd(spec_hub_dir: Path | None, workspace_root: Path | None) -> None:
+    """Mapeia e sincroniza o grafo de produtos, capacidades e contratos de todo o ecossistema."""
+    from harness_state.capabilities import DomainInspector, print_map_all_report
+
+    target_hub = spec_hub_dir
+    if target_hub is None:
+        candidates = [
+            Path("../harness-spec-hub"),
+            Path("../paralax-spec-hub"),
+            Path("../../harness-spec-hub"),
+            Path("../../paralax-spec-hub"),
+            Path("."),
+        ]
+        for cand in candidates:
+            if (cand / "manifest.yaml").is_file() and (cand / "capabilities").is_dir():
+                target_hub = cand
+                break
+    if target_hub is None or not target_hub.exists():
+        console.print("[bold red]Erro:[/bold red] Diretório do spec-hub não encontrado. Especifique via --spec-hub-dir.")
+        raise click.ClickException("spec-hub não encontrado")
+
+    inspector = DomainInspector()
+    report = inspector.map_all_repositories(target_hub, workspace_root)
+    print_map_all_report(report)
 
 
 # ============================================================

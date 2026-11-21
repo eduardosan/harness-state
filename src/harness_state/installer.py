@@ -343,6 +343,10 @@ def install_module_harness(
     if copy_if_needed(post_merge_src, workflows_dir / "bug-post-merge.yml", force):
         installed_pipeline.append(".github/workflows/bug-post-merge.yml")
 
+    tag_gate_src = catalog_root / "pipeline" / "common" / "tag-gate.yml"
+    if copy_if_needed(tag_gate_src, workflows_dir / "tag-gate.yml", force):
+        installed_pipeline.append(".github/workflows/tag-gate.yml")
+
     user_cfg = get_default_user_config_path()
     cfg_display = str(user_cfg) if user_cfg.is_file() else ""
 

@@ -2,6 +2,7 @@ name: Testes (antes de qualquer merge)
 
 # SPEC-006 nota do operador: testes rodando ANTES do merge — em PRs para a
 # main e em pushes nela (defesa contra push direto do operador).
+# SPEC-012: Desduplicação de CI para evitar retestes redundantes após o merge na main.
 
 on:
   pull_request:
@@ -20,17 +21,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Verificar check-runs prévios no PR (Desduplicação de CI)
+        id: check-dedup
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV_CHECK=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --jq '.check_runs[] | select(.name == "Test" or .name == "unit-tests" or .name == "Testes unitários") | select(.conclusion == "success") | .id' 2>/dev/null | head -n 1 || true)
+
+          if [ -n "$PREV_CHECK" ]; then
+            echo "Commit ${GITHUB_SHA} já validado com sucesso no PR (Check Run ID: ${PREV_CHECK}). Pulando reteste redundante na main."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.check-dedup.outputs.skip != 'true'
 
       - uses: astral-sh/setup-uv@v4
+        if: steps.check-dedup.outputs.skip != 'true'
 
       - name: Instalar dependências (incl. dev = pyright)
+        if: steps.check-dedup.outputs.skip != 'true'
         run: uv sync --all-groups
 
       - name: Tipagem estática (pyright)
+        if: steps.check-dedup.outputs.skip != 'true'
         run: uv run pyright src tests
 
       - name: "Sensores determinísticos de AST (Python Fluente, PYF001-PYF007)"
+        if: steps.check-dedup.outputs.skip != 'true'
         run: |
           # Gate de estilo cognitivo no PR, como no pipeline do flywheel
           # (job 'Testes Unitários & Sensores AST'). Escopo src/ apenas:
@@ -38,9 +60,11 @@ jobs:
           uv run python -m harness_state.sensors.ast_sensor src/harness_state/
 
       - name: Testes unitários
+        if: steps.check-dedup.outputs.skip != 'true'
         run: uv run pytest tests --no-header -q
 
       - name: Estilo (ruff + isort)
+        if: steps.check-dedup.outputs.skip != 'true'
         run: |
           uv run ruff check src tests
           uv run isort --check-only src tests

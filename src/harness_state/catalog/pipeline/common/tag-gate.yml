@@ -1,0 +1,24 @@
+name: Harness Tag Gate
+
+# Validação canônica de tags e releases pelo Harness Judge via workflow reutilizável (SPEC-012).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag candidata a ser avaliada (ex: v1.0.0)"
+        required: true
+        type: string
+
+jobs:
+  tag-gate:
+    name: "Harness Tag Gate"
+    uses: eduardosan/harness-state/.github/workflows/reusable-tag-evaluation.yml@main
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+      fast: true
+      runs_on: self-hosted
+    secrets: inherit
