@@ -52,6 +52,7 @@ from harness_state.spec.fanout import (
     fanout_all_repository_specs,
     generate_repo_spec,
     mark_repo_spec_status,
+    mark_subtask_completed_in_spec_file,
     merge_completed_hub_branches,
     save_repo_spec,
     sync_spoke_spec_to_hub,
@@ -64,6 +65,7 @@ from harness_state.spec.lifecycle import (
     extract_yaml_frontmatter,
     get_frozen_and_pending_tasks,
     merge_refined_spec,
+    resolve_spec_file_path,
 )
 from harness_state.spec_parser import (
     build_branch,
@@ -1051,6 +1053,13 @@ class HarnessOrchestrator:
         if not final_spec.is_complete:
             return False
         for completed_task in final_spec:
+            mark_subtask_completed_in_spec_file(
+                spec_file=spec_path,
+                task_id=completed_task.id,
+                repo=completed_task.repo,
+                pr_number=completed_task.pr_number,
+                pr_url=completed_task.pr_url,
+            )
             c_repo_dir = self.resolve_target_repo_dir(completed_task.repo)
             if c_repo_dir.is_dir():
                 mark_repo_spec_status(
@@ -1060,6 +1069,13 @@ class HarnessOrchestrator:
                 )
                 sub_spec_file = c_repo_dir / "specs" / f"{final_spec.spec_id}.md"
                 if sub_spec_file.is_file():
+                    mark_subtask_completed_in_spec_file(
+                        spec_file=sub_spec_file,
+                        task_id=completed_task.id,
+                        repo=completed_task.repo,
+                        pr_number=completed_task.pr_number,
+                        pr_url=completed_task.pr_url,
+                    )
                     sync_spoke_spec_to_hub(
                         spoke_spec_path=sub_spec_file,
                         hub_spec_path=spec_path,
@@ -1377,9 +1393,27 @@ class HarnessOrchestrator:
             worker_id=worker_id,
             expected_version=declared_ver,
             pr_number=pr_num,
+            pr_url=pr_url,
             issue_number=next_task.issue_number,
             issue_url=next_task.issue_url,
         )
+        mark_subtask_completed_in_spec_file(
+            spec_file=spec_path,
+            task_id=next_task.id,
+            repo=next_task.repo,
+            pr_number=pr_num,
+            pr_url=pr_url,
+        )
+        if target_repo_dir.is_dir():
+            spoke_spec = target_repo_dir / "specs" / f"{active_spec.spec_id}.md"
+            if spoke_spec.is_file():
+                mark_subtask_completed_in_spec_file(
+                    spec_file=spoke_spec,
+                    task_id=next_task.id,
+                    repo=next_task.repo,
+                    pr_number=pr_num,
+                    pr_url=pr_url,
+                )
         final_spec = updated_spec or active_spec
         hub_synced = self._finalize_completed_spec_spokes(final_spec, spec_path)
 
@@ -1690,6 +1724,19 @@ class HarnessOrchestrator:
             spec_id=spec.spec_id,
             new_status="MERGED",
         )
+        hub_spec = resolve_spec_file_path(
+            spec.spec_id, specs_dir=self.spec_hub_dir / "specs"
+        )
+        if hub_spec and hub_spec.is_file():
+            for t in spec.tasks.values():
+                if t.status in (TaskState.READY, TaskState.APPROVED):
+                    mark_subtask_completed_in_spec_file(
+                        spec_file=hub_spec,
+                        task_id=t.id,
+                        repo=t.repo,
+                        pr_number=t.pr_number,
+                        pr_url=t.pr_url,
+                    )
         return True
 
     def _collect_closure_tasks_metadata(

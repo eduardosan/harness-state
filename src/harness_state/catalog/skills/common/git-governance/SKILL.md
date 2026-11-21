@@ -12,4 +12,4 @@ description: >
 2. **Proibição de Criação de Tags:**
    - Agentes nunca devem executar `git tag` ou `git push --tags`.
 3. **Abertura de Pull Request (`gh pr create`):**
-   - Após validar com `just verify`, envie a branch e abra o Pull Request referenciando o identificador `SPEC-XXX` (ou deixe o `harness spec run` automatizar o push e abertura do PR).
+   - Após validar com `just verify`, envie a branch e abra o Pull Request referenciando o identificador `SPEC-XXX` e incluindo obrigatoriamente `Closes #<issue>` no corpo do PR para fechar automaticamente a issue vinculada no merge (ou deixe o `harness spec run` automatizar o push e abertura do PR).

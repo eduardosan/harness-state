@@ -52,7 +52,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import redis
 
@@ -65,7 +65,11 @@ from harness_state.client import (
     redis_spec_key,
 )
 from harness_state.contracts import ContractValidationResult
-from harness_state.spec.fanout import mark_repo_spec_status
+from harness_state.spec.fanout import (
+    mark_repo_spec_status,
+    mark_subtask_completed_in_spec_file,
+)
+from harness_state.spec.lifecycle import resolve_spec_file_path
 
 
 @dataclass
@@ -328,11 +332,79 @@ class TransactionalGateClosure:
                 mark_repo_spec_status(cand_dir, spec_id, "IMPLEMENTED")
                 break
 
+    def _merge_single_spoke_pr(
+        self,
+        repo: str,
+        pr_num: int,
+        spec_id: str,
+        task_id: str,
+        merged_prs: list[tuple[str, int]],
+        errors: list[str],
+    ) -> None:
+        """Executa a aprovação, merge e anotação do PR de um spoke.
+
+        Args:
+            repo: Repositório spoke.
+            pr_num: Número do PR aberto.
+            spec_id: Identificador da especificação.
+            task_id: Identificador da subtarefa.
+            merged_prs: Lista mutável acumulando PRs mergeados.
+            errors: Lista mutável de erros acumulados.
+        """
+        self.github_client.add_label(repo, pr_num, "harness-approved")
+        if not self.github_client.merge_pr(repo, pr_num):
+            errors.append(f"Falha ao realizar merge no PR #{pr_num} de {repo}")
+            return
+
+        merged_prs.append((repo, pr_num))
+        self._mark_local_spoke_spec_implemented(repo, spec_id)
+        if not self.spec_hub_dir or not self.spec_hub_dir.is_dir():
+            return
+
+        hub_spec = resolve_spec_file_path(
+            spec_id, specs_dir=self.spec_hub_dir / "specs"
+        )
+        if hub_spec and hub_spec.is_file():
+            mark_subtask_completed_in_spec_file(
+                spec_file=hub_spec,
+                task_id=task_id,
+                repo=repo,
+                pr_number=pr_num,
+            )
+
+    def _close_spoke_tracking_issue(
+        self,
+        repo: str,
+        issue_num: int,
+        pr_num: int | None,
+        spec_id: str,
+        task_id: str,
+        judge_score: float | None,
+    ) -> None:
+        """Encerra a issue de rastreamento no GitHub com comentário de fechamento.
+
+        Args:
+            repo: Repositório da issue.
+            issue_num: Número da issue.
+            pr_num: Número do PR mergeado.
+            spec_id: Identificador da especificação.
+            task_id: Identificador da tarefa.
+            judge_score: Nota do Judge.
+        """
+        assert pr_num is not None, f"Task {task_id} sem PR mergeado"
+        close_comment = self._build_spoke_close_comment(
+            task_id=task_id,
+            spec_id=spec_id,
+            pr_num=pr_num,
+            judge_score=judge_score,
+        )
+        self.github_client.close_issue(repo, issue_num, close_comment)
+
     def _approve_and_merge_spoke_tasks(
         self,
         spec_id: str,
         judge_score: float | None,
-        tasks_info: list[dict],
+        tasks_info: list[dict[str, Any]],
         merged_prs: list[tuple[str, int]],
         errors: list[str],
     ) -> None:
@@ -351,23 +423,25 @@ class TransactionalGateClosure:
             task_id = task.get("task_id", "")
 
             if repo and pr_num:
-                self.github_client.add_label(repo, pr_num, "harness-approved")
-                if self.github_client.merge_pr(repo, pr_num):
-                    merged_prs.append((repo, pr_num))
-                    self._mark_local_spoke_spec_implemented(repo, spec_id)
-                else:
-                    errors.append(f"Falha ao realizar merge no PR #{pr_num} de {repo}")
+                self._merge_single_spoke_pr(
+                    repo=repo,
+                    pr_num=pr_num,
+                    spec_id=spec_id,
+                    task_id=task_id,
+                    merged_prs=merged_prs,
+                    errors=errors,
+                )
 
             issue_num = task.get("issue_number")
             if repo and issue_num:
-                assert pr_num is not None, f"Task {task_id} sem PR mergeado"
-                close_comment = self._build_spoke_close_comment(
-                    task_id=task_id,
-                    spec_id=spec_id,
+                self._close_spoke_tracking_issue(
+                    repo=repo,
+                    issue_num=issue_num,
                     pr_num=pr_num,
+                    spec_id=spec_id,
+                    task_id=task_id,
                     judge_score=judge_score,
                 )
-                self.github_client.close_issue(repo, issue_num, close_comment)
 
             if task_id:
                 sync_task_to_state_tracker(

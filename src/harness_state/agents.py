@@ -1251,6 +1251,17 @@ class AgentRunner:
                 "5. Verification Gate: Run verification sensors ('just verify') "
                 "and ensure all tests and linter sensors pass."
             ),
+            (
+                f"6. Pull Request & Issue Tracking: When opening the PR via 'gh pr create', "
+                f"you MUST include 'Closes #{task.issue_number}' in the PR body "
+                "so GitHub automatically closes the tracking issue upon merge."
+                if task.issue_number
+                else (
+                    "6. Pull Request & Issue Tracking: When opening the PR via 'gh pr create', "
+                    "you MUST include 'Closes #<issue_number>' in the PR body "
+                    "referencing the tracking issue."
+                )
+            ),
         ]
 
         if feedback.strip():

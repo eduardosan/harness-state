@@ -75,6 +75,7 @@ class SubTask(BaseModel):
     branch: str
     status: TaskState = TaskState.PENDING
     pr_number: int | None = None
+    pr_url: str | None = None
     issue_number: int | None = None
     issue_url: str | None = None
     expected_version: str | None = None
@@ -263,6 +264,7 @@ class SpecRun(BaseModel):
         status: TaskState,
         worker_id: str | None = None,
         pr_number: int | None = None,
+        pr_url: str | None = None,
         expected_version: str | None = None,
         issue_number: int | None = None,
         issue_url: str | None = None,
@@ -291,6 +293,8 @@ class SpecRun(BaseModel):
             task.last_worker = worker_id
         if pr_number is not None:
             task.pr_number = pr_number
+        if pr_url is not None:
+            task.pr_url = pr_url
         if expected_version is not None:
             task.expected_version = expected_version
         if issue_number is not None:

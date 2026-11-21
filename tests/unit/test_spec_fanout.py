@@ -9,6 +9,8 @@ from harness_state.spec.fanout import (
     filter_relevant_spec_sections,
     generate_repo_spec,
     mark_repo_spec_status,
+    mark_subtask_completed_in_spec_file,
+    mark_subtask_completed_in_spec_text,
     save_repo_spec,
     sync_spoke_spec_to_hub,
 )
@@ -327,3 +329,83 @@ def test_sync_spoke_spec_to_hub_reconciles_changes(tmp_path: Path) -> None:
     assert "[Onda 3] `paralax-ia/argocd`" in hub_text
     assert "Contratos do SDK Python (`paralax-evo-crm`)" in hub_text
     assert "Injeção Declarativa no ArgoCD (`argocd`)" in hub_text
+
+
+def test_mark_subtask_completed_in_spec_text_canonical() -> None:
+    """Business Rule: Marca checkbox de subtarefa canônica e vincula PR na spec."""
+    raw_spec = (
+        "## 2. Escopo e Repositórios Afetados\n\n"
+        "- [x] **Sub-tarefa 1 (`repo-a`):** Onda 1 já entregue.\n"
+        "- [ ] **Sub-tarefa 2 (`repo-b`):** Onda 2 em andamento.\n"
+        "- [ ] **Sub-tarefa 3 (`repo-c`):** Onda 3 aguardando.\n"
+    )
+    updated = mark_subtask_completed_in_spec_text(
+        content=raw_spec,
+        task_id="task-2",
+        repo="repo-b",
+        pr_number=42,
+        pr_url="https://github.com/org/repo-b/pull/42",
+    )
+    assert "- [x] **Sub-tarefa 1 (`repo-a`):** Onda 1 já entregue." in updated
+    assert (
+        "- [x] **Sub-tarefa 2 (`repo-b`):** Onda 2 em andamento. "
+        "[PR #42](https://github.com/org/repo-b/pull/42)"
+    ) in updated
+    assert "- [ ] **Sub-tarefa 3 (`repo-c`):** Onda 3 aguardando." in updated
+
+
+def test_mark_subtask_completed_in_spec_text_idempotent() -> None:
+    """Business Rule: Não duplica link de PR quando a subtarefa já estiver marcada."""
+    raw_spec = (
+        "- [x] **Sub-tarefa 1 (`repo-a`):** Concluída. "
+        "[PR #42](https://github.com/org/repo-a/pull/42)\n"
+    )
+    updated = mark_subtask_completed_in_spec_text(
+        content=raw_spec,
+        task_id="task-1",
+        repo="repo-a",
+        pr_number=42,
+        pr_url="https://github.com/org/repo-a/pull/42",
+    )
+    assert updated == raw_spec
+
+
+def test_mark_subtask_completed_in_spec_file(tmp_path: Path) -> None:
+    """Business Rule: Atualiza arquivo Markdown em disco marcando subtarefa como concluída."""
+    spec_file = tmp_path / "SPEC-001.md"
+    spec_file.write_text(
+        "## 2. Escopo\n- [ ] **Sub-tarefa 1 (`spoke`):** Requisito.\n",
+        encoding="utf-8",
+    )
+    result = mark_subtask_completed_in_spec_file(
+        spec_file=spec_file,
+        task_id="task-1",
+        repo="spoke",
+        pr_number=10,
+    )
+    assert result is True
+    assert (
+        "- [x] **Sub-tarefa 1 (`spoke`):** Requisito. [PR #10]"
+        in spec_file.read_text(encoding="utf-8")
+    )
+
+
+def test_generate_repo_spec_includes_closes_instruction_with_issue(tmp_path: Path) -> None:
+    """Business Rule: Injeta diretriz 'Closes #N' no cabeçalho da sub-spec quando issue existir."""
+    hub_spec = tmp_path / "SPEC-004.md"
+    hub_spec.write_text(SAMPLE_MAIN_SPEC, encoding="utf-8")
+    task = SubTask(
+        id="task-1",
+        repo="paralax-ia/paralax-evo-crm",
+        branch="agent/harness-spec-004-paralax-evo-crm",
+        wave=1,
+        issue_number=99,
+    )
+    sub_spec = generate_repo_spec(
+        main_spec_path=hub_spec,
+        repo_name="paralax-ia/paralax-evo-crm",
+        task=task,
+    )
+    assert "> **Issue de Rastreamento:** #99" in sub_spec
+    assert "Closes #99" in sub_spec
+

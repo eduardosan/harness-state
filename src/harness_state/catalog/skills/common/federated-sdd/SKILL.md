@@ -63,10 +63,10 @@ Esta skill estabelece a ponte operacional e metodológica entre o **Superpowers*
 - Se qualquer sensor falhar (`ruff`, `pyright`, `import-linter`, `pytest`), utilize o feedback prescritivo de `.harness/sensors/format_feedback.sh` para investigar a causa raiz sistematicamente antes de tentar correções pontuais.
 
 ### E. Fase de Entrega e Gate Transacional (`superpowers:requesting-code-review`)
-- Com o `just verify` 100% verde, envie a branch e abra o Pull Request:
+- Com o `just verify` 100% verde, envie a branch e abra o Pull Request (é OBRIGATÓRIO incluir `Closes #<issue>` no corpo do PR para encerramento automático da issue no merge):
   ```bash
   git push -u origin feat/spec-xxx-...
-  gh pr create --title "feat(<escopo>): implementar SPEC-XXX" --body "..."
+  gh pr create --title "feat(<escopo>): implementar SPEC-XXX" --body "... Closes #<issue>"
   ```
 - Notifique o State Tracker:
   ```bash
