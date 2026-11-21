@@ -166,8 +166,13 @@ jobs:
           if [ "${{ inputs.fast }}" = "true" ]; then
             FAST_FLAG="--fast"
           fi
+          SPEC_ARG=""
+          if [ -f docs/architecture/code-evaluation-flow.md ]; then
+            SPEC_ARG="--spec docs/architecture/code-evaluation-flow.md"
+          fi
           uv run python -m harness_state.judge \
             $FAST_FLAG \
+            $SPEC_ARG \
             --diffs release_artifacts/release_diff.patch \
             --spec-id "TAG-${{ steps.release-info.outputs.tag }}" \
             --out-file release_artifacts/evaluation_report.json \
