@@ -10,6 +10,10 @@ on:
         required: false
         default: "patch"
         type: string
+    outputs:
+      tag:
+        description: "Tag calculada e cortada na release"
+        value: ${{ jobs.release-candidate.outputs.tag }}
   workflow_dispatch:
     inputs:
       bump:

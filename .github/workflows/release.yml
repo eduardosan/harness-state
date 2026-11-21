@@ -1,16 +1,9 @@
 name: Tag and Release from Main (post-squash only)
 
-# SPEC-006 Onda 2 (D3.4) — release público AGPL-3.0, tag cortada no SHA
-# pós-squash da main (nunca head de PR). Bump por Conventional Commits,
-# versão do pacote sincronizada com a tag antes do build.
-#
-# Gate síncrono de LLM (regra do operador): após determinar a versão
-# candidata, o job `pre-release-eval` CHAMA (workflow_call) o
-# `tag-code-evaluation.yml` — que roda fluent-python-eval -> prompts-eval ->
-# LLM-as-a-Judge sobre o diff LATEST_TAG..HEAD (conteúdo exatamente igual ao
-# que será taggeado). Somente com veredito APPROVED o job `tag-and-release`
-# corta a tag, publica a GitHub Release e notifica o flywheel (core-released).
-# REJECTED ou falha de avaliação bloqueia o corte (needs falha -> skip).
+# SPEC-006 / SPEC-009G: Release público desacoplado e reutilizável.
+# O fluxo principal delega a execução para o workflow reutilizável canônico
+# `reusable-release.yml` (que executa evals paralelos com cache e fast judge)
+# e, após o corte da tag, notifica o repositório consumidor `agentic-flywheel`.
 
 on:
   push:
@@ -36,183 +29,18 @@ concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  # Racional (SPEC-006, diretriz final do operador): o produtor chama o
-  # consumidor e ESPERA o resultado antes de cortar a tag. A tentativa via
-  # `uses:` cross-repo (workflow_call privado) foi RECUSADA pelo próprio
-  # GitHub no load (reusable workflow privado só pode ser chamado pela
-  # própria repo) — a versão equivalente que funciona: o job abaixo roda no
-  # SELF-HOSTED do estado (mesma CT do runner do flywheel, ambiente local
-  # com Redis/ES/LLM) e executa a suíte completa da aplicação check-out
-  # via FLYWHEEL_DISPATCH_TOKEN (o mesmo mecanismo validado no hub).
-  tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --all-groups
-      - name: Tipagem estática (pyright)
-        run: uv run pyright src tests
-      - name: Testes unitários
-        run: uv run pytest tests --no-header -q
-
-  public-surface-smoke:
-    needs: tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --all-groups
-      - name: Build wheel e sdist
-        run: uv build
-      - name: Instalar wheel em venv hermético e validar superfície pública
-        run: |
-          uv venv /tmp/public-cli
-          VIRTUAL_ENV=/tmp/public-cli uv pip install dist/*.whl
-          /tmp/public-cli/bin/harness --help | grep -qE "get-spec|status|update"
-          /tmp/public-cli/bin/harness get-spec --help
-
-  harness-complete:
-    name: "Aplicação completa valida o núcleo antes do corte"
-    needs: [tests, public-surface-smoke]
-    runs-on: self-hosted
-    timeout-minutes: 25
-    steps:
-      - name: Checkout da aplicação completa
-        uses: actions/checkout@v4
-        with:
-          repository: eduardosan/agentic-flywheel
-          token: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
-          fetch-depth: 0
-
-      - name: Instalar uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Sincronizar dependências da aplicação
-        run: uv sync --all-groups
-
-      - name: Configuração do harness (ambiente local do runner)
-        run: uv run harness setup --ci
-
-      - name: Suíte completa da aplicação
-        run: uv run pytest tests/unit --no-header -q
-
-      - name: Superfície composta da CLI
-        run: |
-          uv run harness --help | grep -qE "bug|slack|verify"
-          uv run harness spec --help | grep -qE "run"
-
-  release-candidate:
-    name: "Determinar a versão candidata da release"
-    needs: [tests, public-surface-smoke, harness-complete]
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.semver.outputs.tag }}
-      exists: ${{ steps.semver.outputs.exists }}
-    steps:
-      - name: Checkout da main
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Instalar uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Calcular próxima tag SemVer (Conventional Commits)
-        id: semver
-        env:
-          COMMIT_TITLE: ${{ github.event.head_commit.message }}
-          EXPLICIT_BUMP: ${{ inputs.bump || '' }}
-        run: |
-          git fetch --tags --force
-          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
-          TITLE="${COMMIT_TITLE:-$(git log -1 --pretty=%s "${GITHUB_SHA}")}"
-          case "$TITLE" in
-            *"!"*) INFERRED="major" ;;
-            feat:*) INFERRED="minor" ;;
-            "feat("*) INFERRED="minor" ;;
-            *) INFERRED="patch" ;;
-          esac
-          case "$TITLE" in
-            *BREAKING*|*breaking*) INFERRED="major" ;;
-          esac
-          BUMP="${EXPLICIT_BUMP:-$INFERRED}"
-          if [ -n "$LATEST_TAG" ]; then
-            BASE_VERSION="${LATEST_TAG#v}"
-          else
-            BASE_VERSION=$(awk -F'"' '/^version = /{print $2}' pyproject.toml)
-          fi
-          NEXT=$(awk -v sv="$BASE_VERSION" -v kind="$BUMP" 'BEGIN{
-            split(sv, a, ".");
-            if (kind == "major") print (a[1]+1)".0.0";
-            else if (kind == "minor") print a[1]"."(a[2]+1)".0";
-            else print a[1]"."a[2]"."(a[3]+1);
-          }')
-          TAG="v$NEXT"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG já existe — reexecução idempotente, nada a cortar."
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  pre-release-eval:
-    name: "Autoavaliação ANTES do corte (fluent -> prompts -> LLM-as-a-Judge)"
-    needs: release-candidate
-    if: needs.release-candidate.outputs.exists == 'false'
-    uses: ./.github/workflows/tag-code-evaluation.yml
+  release:
+    name: "Esteira Reutilizável de Release"
+    uses: ./.github/workflows/reusable-release.yml
     with:
-      tag: ${{ needs.release-candidate.outputs.tag }}
+      bump: ${{ inputs.bump || 'patch' }}
     secrets: inherit
 
-  tag-and-release:
-    name: "Cortar tag, publicar GitHub Release e notificar o flywheel"
-    needs: [release-candidate, pre-release-eval]
+  notify-flywheel:
+    name: "Notificar repositório do Flywheel (core-released)"
+    needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Registrar veredito prévio do juiz
-        env:
-          STATUS: ${{ needs.pre-release-eval.outputs.status }}
-          SCORE: ${{ needs.pre-release-eval.outputs.compliance_score }}
-        run: |
-          echo "Gate síncrono: $STATUS (score ${SCORE}/100) — prosseguindo com o corte."
-
-      - name: Checkout da main
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Instalar uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Sincronizar versão no pyproject
-        env:
-          TAG: ${{ needs.release-candidate.outputs.tag }}
-        run: |
-          sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
-          grep "^version = " pyproject.toml
-
-      - name: Build wheel e sdist
-        run: uv build
-
-      - name: Criar tag anotada no SHA da main
-        env:
-          TAG: ${{ needs.release-candidate.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rev-parse "$TAG" >/dev/null 2>&1 || git tag -a "$TAG" "${{ github.sha }}" -m "Release $TAG"
-          git push origin "$TAG"
-
-      - name: Criar GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-candidate.outputs.tag }}
-        run: |
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
-
       - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao flywheel)
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -224,7 +52,7 @@ jobs:
       - name: repository_dispatch core-released ao flywheel (o consumidor bumpa a versão do núcleo)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ needs.release-candidate.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
           SHA: ${{ github.sha }}
         run: |
           gh api "repos/eduardosan/agentic-flywheel/dispatches" \
