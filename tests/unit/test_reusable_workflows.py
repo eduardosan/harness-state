@@ -28,13 +28,13 @@ def test_reusable_workflows_exist_and_are_valid_yaml() -> None:
         assert "jobs" in parsed
 
 
-def test_reusable_spec_ci_contains_parallel_evals_and_cache() -> None:
-    """Business Rule: reusable-spec-ci.yml deve executar evals em paralelo via pytest -n 4 com cache."""
+def test_reusable_spec_ci_contains_evals_and_cache() -> None:
+    """Business Rule: reusable-spec-ci.yml deve executar evals respeitando controle de recursos e cache."""
     repo_root = Path(__file__).resolve().parents[2]
     workflow_path = repo_root / ".github" / "workflows" / "reusable-spec-ci.yml"
 
     content = workflow_path.read_text(encoding="utf-8")
-    assert "pytest -n 4" in content
+    assert "pytest" in content
     assert "actions/cache@v4" in content
     assert "workflow_call" in content
 

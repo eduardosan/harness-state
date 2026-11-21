@@ -1,7 +1,8 @@
 name: Reusable Spec Guidelines DeepEval Validation
 
-# Validação paralela das diretrizes normativas via DeepEval e pytest-xdist (-n 4)
-# com cache inteligente baseado no hash das especificações e diretrizes.
+# Validação das diretrizes normativas via DeepEval em execução única (respeitando
+# a diretriz de controle de recursos do servidor Ollama: 1 operação por vez)
+# com aceleração via cache inteligente baseado no hash das especificações e diretrizes.
 
 on:
   workflow_call:
@@ -14,8 +15,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  parallel-guidelines-eval:
-    name: "Avaliação Paralela de Diretrizes e Python Fluente (pytest -n 4)"
+  guidelines-eval:
+    name: "Avaliação de Diretrizes e Python Fluente (DeepEval + Cache)"
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +38,7 @@ jobs:
           path: .harness/eval_cache_passed
           key: ${{ inputs.cache-prefix || 'evals-guidelines' }}-${{ steps.guideline-hash.outputs.hash }}
 
-      - name: Executar Evals em Paralelo (pytest-xdist -n 4)
+      - name: Executar Avaliação de Diretrizes (DeepEval)
         if: steps.eval-cache.outputs.cache-hit != 'true'
         env:
           DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
@@ -47,7 +48,7 @@ jobs:
           LLM_JUDGE_FALLBACK_MODEL: ${{ vars.LLM_JUDGE_FALLBACK_MODEL }}
         run: |
           mkdir -p .harness
-          uv run pytest -n 4 \
+          uv run pytest \
             tests/evals/test_fluent_python_phase1.py \
             tests/evals/test_fluent_python_phase2.py \
             tests/evals/test_fluent_python_phase3.py \
