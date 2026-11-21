@@ -50,15 +50,15 @@ concurrency:
 #      que só roda com a etapa 1 verde (needs).
 jobs:
   guidelines-eval:
-    name: "Autoavaliação Python Fluente + Diretrizes (DeepEval)"
-    uses: ./.github/workflows/spec-ci.yml
+    name: "Autoavaliação Paralela de Diretrizes (DeepEval)"
+    uses: ./.github/workflows/reusable-spec-ci.yml
     secrets: inherit
 
   evaluate-tag-release:
     name: "LLM-as-a-Judge Canônico da Release (Tag)"
     needs: guidelines-eval
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 15
     outputs:
       status: ${{ steps.judge-step.outputs.status }}
       compliance_score: ${{ steps.judge-step.outputs.compliance_score }}
@@ -118,6 +118,7 @@ jobs:
           DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE: "3600"
         run: |
           uv run python -m harness_state.judge \
+            --fast \
             --spec docs/architecture/code-evaluation-flow.md \
             --diffs release_artifacts/release_diff.patch \
             --spec-id "TAG-${{ steps.release-info.outputs.tag }}" \

@@ -159,12 +159,13 @@ jobs:
           fi
 
   pre-release-eval:
-    name: "Autoavaliação ANTES do corte (fluent -> prompts -> LLM-as-a-Judge)"
+    name: "Autoavaliação Rápida ANTES do corte (DeepEval + Fast Judge)"
     needs: release-candidate
     if: needs.release-candidate.outputs.exists == 'false'
-    uses: ./.github/workflows/tag-code-evaluation.yml
+    uses: ./.github/workflows/reusable-tag-evaluation.yml
     with:
       tag: ${{ needs.release-candidate.outputs.tag }}
+      fast: true
     secrets: inherit
 
   tag-and-release:
