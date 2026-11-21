@@ -495,7 +495,12 @@ def compose_task_issue_body(
         f"- **Repositório:** `{repo_name}`",
         f"- **Especificação:** `{spec_id}` ({sub_spec_path or spec_id})",
         f"- **Dependências:** `{dep_text}`",
-        f"- **Versão Esperada:** `{ver_text}`\n",
+        f"- **Versão Esperada:** `{ver_text}`",
+        (
+            "- **Diretriz de Pull Request:** Ao abrir o PR via `gh pr create`, "
+            "inclua obrigatoriamente `Closes #<issue_number>` no corpo do PR "
+            "para encerramento automático da issue após o merge.\n"
+        ),
     ]
     if sub_spec_content:
         header_lines.append("---\n")
@@ -568,6 +573,74 @@ def maybe_upgrade_existing_issue_body(
         )
 
 
+def resolve_task_issue_labels(ci_mode: bool, wave: int) -> list[str]:
+    """Determina as labels aplicadas à issue da tarefa com base no ambiente.
+
+    Args:
+        ci_mode: Flag indicando ambiente CI/remoto.
+        wave: Onda de execução da subtarefa.
+
+    Returns:
+        Lista de labels do GitHub.
+    """
+    if ci_mode:
+        return ["agent-run", "agent-spec"] if wave == 1 else ["agent-spec"]
+    return ["agent-local", "agent-spec"]
+
+
+def execute_issue_creation(
+    repo_dir: Path,
+    cmd: list[str],
+    labels: list[str],
+) -> subprocess.CompletedProcess[str]:
+    """Executa a criação de issue via gh CLI com auto-recuperação de labels ausentes.
+
+    Args:
+        repo_dir: Diretório raiz do repositório local.
+        cmd: Comando gh estruturado.
+        labels: Lista de labels necessárias.
+
+    Returns:
+        Resultado da execução do subprocess.
+    """
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 and labels:
+        stderr_text = (proc.stderr or proc.stdout).strip()
+        ensure_labels_exist(
+            labels,
+            run_gh=lambda args: subprocess.run(
+                ["gh", *args],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            ),
+        )
+        proc = subprocess.run(
+            cmd,
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"gh issue create com labels falhou em {repo_dir.name}: "
+                f"{(proc.stderr or proc.stdout).strip() or stderr_text} — as "
+                f"labels {', '.join(labels)} são obrigatórias para a esteira "
+                "(gatilho de execução); corrija permissões/labels e re-execute "
+                "o fan-out. Issue NÃO é criada sem rótulo (mascaramento "
+                "proibido pela diretriz de RCA)."
+            )
+    return proc
+
+
 def ensure_task_issue(
     repo_dir: Path,
     spec_id: str,
@@ -627,52 +700,13 @@ def ensure_task_issue(
         return existing_num, existing_url
 
     title_text = f"feat: [{spec_id}] {task_title or f'Implementar {task_id}'}".strip()
-
-    if ci_mode:
-        labels = ["agent-run", "agent-spec"] if wave == 1 else ["agent-spec"]
-    else:
-        labels = ["agent-local", "agent-spec"]
+    labels = resolve_task_issue_labels(ci_mode=ci_mode, wave=wave)
 
     cmd = ["gh", "issue", "create", "--title", title_text, "--body", body_text]
     for lbl in labels:
         cmd.extend(["--label", lbl])
 
-    proc = subprocess.run(
-        cmd,
-        cwd=repo_dir,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0 and labels:
-        stderr_text = (proc.stderr or proc.stdout).strip()
-        ensure_labels_exist(
-            labels,
-            run_gh=lambda args: subprocess.run(
-                ["gh", *args],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            ),
-        )
-        proc = subprocess.run(
-            cmd,
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"gh issue create com labels falhou em {repo_dir.name}: "
-                f"{(proc.stderr or proc.stdout).strip() or stderr_text} — as "
-                f"labels {', '.join(labels)} são obrigatórias para a esteira "
-                "(gatilho de execução); corrija permissões/labels e re-execute "
-                "o fan-out. Issue NÃO é criada sem rótulo (mascaramento "
-                "proibido pela diretriz de RCA)."
-            )
-
+    proc = execute_issue_creation(repo_dir=repo_dir, cmd=cmd, labels=labels)
     if proc.returncode != 0:
         return None, None
 

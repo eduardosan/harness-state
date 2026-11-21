@@ -527,6 +527,141 @@ def filter_fanout_prompts_for_repo(
     ]
 
 
+def resolve_primary_issue(
+    task: SubTask | None,
+    all_tasks: list[SubTask],
+    primary_task_id: str,
+) -> int | None:
+    """Resolve o número da issue associada à tarefa primária da sub-spec.
+
+    Args:
+        task: Tarefa primária opcional.
+        all_tasks: Lista de todas as tarefas da spec.
+        primary_task_id: Identificador da tarefa principal.
+
+    Returns:
+        Número da issue de tracking ou None se não atribuída.
+    """
+    if task and task.issue_number:
+        return task.issue_number
+    for t in all_tasks:
+        if t.id == primary_task_id and t.issue_number:
+            return t.issue_number
+    return None
+
+
+def build_sub_spec_header(
+    yaml_header: str,
+    spec_id: str,
+    task_title: str,
+    main_spec_name: str,
+    repo_name: str,
+    primary_task_id: str,
+    primary_wave: int,
+    primary_branch: str,
+    primary_issue: int | None,
+) -> str:
+    """Compõe o cabeçalho formatado em Markdown da sub-spec de um spoke.
+
+    Args:
+        yaml_header: Metadados YAML serializados.
+        spec_id: Identificador da especificação.
+        task_title: Título descritivo da tarefa.
+        main_spec_name: Nome do arquivo da spec principal.
+        repo_name: Nome do repositório spoke.
+        primary_task_id: Identificador da subtarefa primária.
+        primary_wave: Onda de execução da subtarefa primária.
+        primary_branch: Branch de trabalho da subtarefa.
+        primary_issue: Número opcional da issue de rastreamento.
+
+    Returns:
+        Bloco de cabeçalho Markdown pronto para composição.
+    """
+    lines = [
+        f"---\n{yaml_header}\n---\n\n",
+        f"# {spec_id}: {task_title}\n\n",
+        f"> **Parent Spec:** `{spec_id}` ({main_spec_name})  \n",
+        f"> **Repositório Alvo:** `{repo_name}`  \n",
+        f"> **Subtarefa Principal:** `{primary_task_id}` (Onda {primary_wave})  \n",
+        f"> **Branch:** `{primary_branch}`  \n",
+    ]
+    if primary_issue is not None:
+        lines.append(f"> **Issue de Rastreamento:** #{primary_issue}  \n")
+    lines.append("> **Status:** `IN_PROGRESS`\n\n")
+
+    closes_directive = (
+        f"Closes #{primary_issue}"
+        if primary_issue is not None
+        else "Closes #<issue_number>"
+    )
+    lines.append(
+        "> [!IMPORTANT]\n"
+        f"> Ao abrir o Pull Request via `gh pr create`, inclua obrigatoriamente `{closes_directive}` "
+        "no corpo do PR para encerramento automático da issue vinculada após o merge.\n\n"
+        "---\n\n"
+    )
+    return "".join(lines)
+
+
+def build_repo_spec_frontmatter(
+    spec_id: str,
+    task_title: str,
+    repo_name: str,
+    primary_task_id: str,
+    primary_wave: int,
+    primary_branch: str,
+    tasks_metadata: list[dict[str, Any]],
+    products: Any,
+    capability: str,
+    prompts: Any,
+    short_repo: str,
+    all_target_repos: set[str] | None,
+) -> dict[str, Any]:
+    """Constrói o dicionário de frontmatter para a sub-spec de um spoke.
+
+    Args:
+        spec_id: Identificador da especificação.
+        task_title: Título composto da tarefa.
+        repo_name: Slug do repositório.
+        primary_task_id: Identificador da tarefa principal.
+        primary_wave: Onda de execução principal.
+        primary_branch: Branch de trabalho principal.
+        tasks_metadata: Metadados das tarefas da sub-spec.
+        products: Produtos associados.
+        capability: Business Capability associada.
+        prompts: Lista de prompts da especificação.
+        short_repo: Nome simples do repositório.
+        all_target_repos: Conjunto de repositórios da spec.
+
+    Returns:
+        Dicionário formatado de frontmatter.
+    """
+    prod_list = [products] if isinstance(products, str) else list(products)
+    frontmatter: dict[str, Any] = {
+        "spec_id": spec_id,
+        "title": task_title,
+        "parent_spec": spec_id,
+        "repo": repo_name,
+        "task_id": primary_task_id,
+        "wave": primary_wave,
+        "branch": primary_branch,
+        "tasks": tasks_metadata,
+        "product": prod_list,
+        "capability": capability,
+        "status": "IN_PROGRESS",
+    }
+    if prompts:
+        filtered = filter_fanout_prompts_for_repo(
+            prompts=prompts,
+            repo_name=repo_name,
+            short_repo=short_repo,
+            all_target_repos=all_target_repos,
+        )
+        if filtered:
+            frontmatter["prompts"] = filtered
+    return frontmatter
+
+
 def generate_repo_spec(
     main_spec_path: Path,
     repo_name: str,
@@ -561,8 +696,6 @@ def generate_repo_spec(
     task_title = f"{base_title} - {short_repo}"
 
     products = main_spec.product if main_spec else frontmatter.get("product", [])
-    if isinstance(products, str):
-        products = [products]
     capability = (
         main_spec.capability if main_spec else str(frontmatter.get("capability") or "")
     )
@@ -582,30 +715,21 @@ def generate_repo_spec(
         spec_id, short_repo, task, all_tasks
     )
 
-    repo_frontmatter = {
-        "spec_id": spec_id,
-        "title": task_title,
-        "parent_spec": spec_id,
-        "repo": repo_name,
-        "task_id": primary_task_id,
-        "wave": primary_wave,
-        "branch": primary_branch,
-        "tasks": tasks_metadata,
-        "product": products,
-        "capability": capability,
-        "status": "IN_PROGRESS",
-    }
-
     prompts = frontmatter.get("prompts", []) or (main_spec.prompts if main_spec else [])
-    if prompts:
-        filtered_prompts = filter_fanout_prompts_for_repo(
-            prompts=prompts,
-            repo_name=repo_name,
-            short_repo=short_repo,
-            all_target_repos=all_target_repos,
-        )
-        if filtered_prompts:
-            repo_frontmatter["prompts"] = filtered_prompts
+    repo_frontmatter = build_repo_spec_frontmatter(
+        spec_id=spec_id,
+        task_title=task_title,
+        repo_name=repo_name,
+        primary_task_id=primary_task_id,
+        primary_wave=primary_wave,
+        primary_branch=primary_branch,
+        tasks_metadata=tasks_metadata,
+        products=products,
+        capability=capability,
+        prompts=prompts,
+        short_repo=short_repo,
+        all_target_repos=all_target_repos,
+    )
 
     yaml_header = yaml.safe_dump(
         repo_frontmatter, sort_keys=False, allow_unicode=True
@@ -619,15 +743,17 @@ def generate_repo_spec(
         all_target_repos=all_target_repos,
     )
 
-    header_block = (
-        f"---\n{yaml_header}\n---\n\n"
-        f"# {spec_id}: {task_title}\n\n"
-        f"> **Parent Spec:** `{spec_id}` ({main_spec_path.name})  \n"
-        f"> **Repositório Alvo:** `{repo_name}`  \n"
-        f"> **Subtarefa Principal:** `{primary_task_id}` (Onda {primary_wave})  \n"
-        f"> **Branch:** `{primary_branch}`  \n"
-        f"> **Status:** `IN_PROGRESS`\n\n"
-        "---\n\n"
+    primary_issue = resolve_primary_issue(task, all_tasks, primary_task_id)
+    header_block = build_sub_spec_header(
+        yaml_header=yaml_header,
+        spec_id=spec_id,
+        task_title=task_title,
+        main_spec_name=main_spec_path.name,
+        repo_name=repo_name,
+        primary_task_id=primary_task_id,
+        primary_wave=primary_wave,
+        primary_branch=primary_branch,
+        primary_issue=primary_issue,
     )
 
     return f"{header_block}{filtered_body}\n"
@@ -873,6 +999,155 @@ def mark_repo_spec_status(
     new_content = f"---\n{updated_yaml}\n---\n\n{body.strip()}\n"
     target_file.write_text(new_content, encoding="utf-8")
     return True
+
+
+def format_pr_reference(pr_number: int | None, pr_url: str | None) -> str:
+    """Formata o link markdown do Pull Request para anotação na spec.
+
+    Args:
+        pr_number: Número do Pull Request.
+        pr_url: URL pública do Pull Request.
+
+    Returns:
+        String formatada (ex: ` [PR #123](url)` ou ` [PR #123]` ou string vazia).
+    """
+    if pr_number is None:
+        return ""
+    if pr_url:
+        return f" [PR #{pr_number}]({pr_url})"
+    return f" [PR #{pr_number}]"
+
+
+def is_matching_subtask_line(
+    line: str,
+    task_id: str,
+    repo: str,
+) -> bool:
+    """Verifica se uma linha de checklist corresponde à subtarefa informada.
+
+    Args:
+        line: Linha de texto da especificação.
+        task_id: Identificador da tarefa (ex: `task-2` ou `2`).
+        repo: Slug do repositório (ex: `eduardosan/harness-state`).
+
+    Returns:
+        True se a linha corresponder à subtarefa.
+    """
+    stripped = line.strip()
+    if not stripped.startswith(("- [ ]", "- [x]", "- [X]")):
+        return False
+
+    short_id = task_id.removeprefix("task-").strip()
+    if short_id and re.search(
+        rf"\*\*Sub-tarefa\s*{re.escape(short_id)}\b", stripped, re.IGNORECASE
+    ):
+        return True
+
+    if repo:
+        clean_repo = repo.strip()
+        short_repo = clean_repo.split("/")[-1]
+        if f"`{clean_repo}`" in stripped or f"`{short_repo}`" in stripped:
+            return True
+
+    return False
+
+
+def mark_single_subtask_line(
+    line: str,
+    pr_number: int | None,
+    pr_url: str | None,
+) -> str:
+    """Converte um item `- [ ]` em `- [x]` e adiciona referência de PR se ausente.
+
+    Args:
+        line: Linha de texto correspondente à subtarefa.
+        pr_number: Número opcional do PR a ser vinculado.
+        pr_url: URL opcional do PR a ser vinculada.
+
+    Returns:
+        Linha atualizada com `[x]` e eventual link de PR.
+    """
+    updated_line = re.sub(r"^(\s*-\s*\[)[ xX](\])", r"\g<1>x\2", line)
+    if pr_number is None:
+        return updated_line
+
+    if f"PR #{pr_number}" in updated_line:
+        return updated_line
+
+    pr_ref = format_pr_reference(pr_number, pr_url)
+    return f"{updated_line.rstrip()}{pr_ref}\n" if line.endswith("\n") else f"{updated_line.rstrip()}{pr_ref}"
+
+
+def mark_subtask_completed_in_spec_text(
+    content: str,
+    task_id: str = "",
+    repo: str = "",
+    pr_number: int | None = None,
+    pr_url: str | None = None,
+) -> str:
+    """Marca o checkbox da subtarefa como `[x]` no corpo Markdown da spec.
+
+    Args:
+        content: Conteúdo completo do arquivo Markdown da especificação.
+        task_id: Identificador da subtarefa (ex: `task-1`).
+        repo: Nome ou slug do repositório alvo.
+        pr_number: Número opcional do Pull Request.
+        pr_url: URL opcional do Pull Request.
+
+    Returns:
+        Conteúdo atualizado com a subtarefa marcada como concluída.
+    """
+    lines = content.splitlines(keepends=True)
+    new_lines: list[str] = []
+    marked = False
+
+    for line in lines:
+        if not marked and is_matching_subtask_line(line, task_id, repo):
+            new_lines.append(mark_single_subtask_line(line, pr_number, pr_url))
+            marked = True
+        else:
+            new_lines.append(line)
+
+    return "".join(new_lines)
+
+
+def mark_subtask_completed_in_spec_file(
+    spec_file: Path,
+    task_id: str = "",
+    repo: str = "",
+    pr_number: int | None = None,
+    pr_url: str | None = None,
+) -> bool:
+    """Atualiza o arquivo Markdown da spec marcando a subtarefa como `[x]`.
+
+    Args:
+        spec_file: Caminho do arquivo de especificação.
+        task_id: Identificador da subtarefa (ex: `task-1`).
+        repo: Nome ou slug do repositório alvo.
+        pr_number: Número opcional do Pull Request.
+        pr_url: URL opcional do Pull Request.
+
+    Returns:
+        True se o arquivo existia e foi modificado, False caso contrário.
+    """
+    if not spec_file.is_file():
+        return False
+
+    original_text = spec_file.read_text(encoding="utf-8")
+    updated_text = mark_subtask_completed_in_spec_text(
+        content=original_text,
+        task_id=task_id,
+        repo=repo,
+        pr_number=pr_number,
+        pr_url=pr_url,
+    )
+
+    if updated_text != original_text:
+        spec_file.write_text(updated_text, encoding="utf-8")
+        return True
+
+    return False
+
 
 
 def collect_owned_specs(

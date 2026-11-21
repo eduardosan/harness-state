@@ -1,0 +1,60 @@
+name: Reusable Spec Guidelines DeepEval Validation
+
+# Validação paralela das diretrizes normativas via DeepEval e pytest-xdist (-n 4)
+# com cache inteligente baseado no hash das especificações e diretrizes.
+
+on:
+  workflow_call:
+    inputs:
+      cache-prefix:
+        description: "Prefixo da chave de cache para diretrizes"
+        required: false
+        type: string
+        default: "evals-guidelines"
+  workflow_dispatch:
+
+jobs:
+  parallel-guidelines-eval:
+    name: "Avaliação Paralela de Diretrizes e Python Fluente (pytest -n 4)"
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sincronizar Dependências com uv
+        run: uv sync
+
+      - name: Calcular Hash das Diretrizes e Evals
+        id: guideline-hash
+        run: |
+          HASH=$(find specs/ tests/evals/ -type f 2>/dev/null | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+          echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+          echo "Guideline & Eval hash: ${HASH}"
+
+      - name: Cache de Resultados dos Evals
+        id: eval-cache
+        uses: actions/cache@v4
+        with:
+          path: .harness/eval_cache_passed
+          key: ${{ inputs.cache-prefix || 'evals-guidelines' }}-${{ steps.guideline-hash.outputs.hash }}
+
+      - name: Executar Evals em Paralelo (pytest-xdist -n 4)
+        if: steps.eval-cache.outputs.cache-hit != 'true'
+        env:
+          DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+          OPENAI_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OLLAMA_API_KEY || secrets.OPENAI_API_KEY || 'ollama' }}
+          LLM_JUDGE_MODEL: ${{ vars.LLM_JUDGE_MODEL }}
+          LLM_JUDGE_FALLBACK_MODEL: ${{ vars.LLM_JUDGE_FALLBACK_MODEL }}
+        run: |
+          mkdir -p .harness
+          uv run pytest -n 4 \
+            tests/evals/test_fluent_python_phase1.py \
+            tests/evals/test_fluent_python_phase2.py \
+            tests/evals/test_fluent_python_phase3.py \
+            tests/evals/test_fluent_python_phase4.py \
+            tests/evals/test_system_prompts.py -v
+          touch .harness/eval_cache_passed
+
+      - name: Confirmar Evals (Cache Hit)
+        if: steps.eval-cache.outputs.cache-hit == 'true'
+        run: echo "Evals de diretrizes reutilizados via cache de hash válido (${{ steps.guideline-hash.outputs.hash }})."

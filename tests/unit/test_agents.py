@@ -876,5 +876,22 @@ def test_agent_runner_executa_prompt_pydantic_coder(tmp_path: Path) -> None:
     assert "PydanticCoderRunner" in output
 
 
+def test_agent_runner_build_prompt_includes_closes_instruction(tmp_path: Path) -> None:
+    """Business Rule: Prompt gerado para agente exige diretriz 'Closes #N' para fechar issue."""
+    runner = AgentRunner()
+    spec_file = tmp_path / "SPEC-001.md"
+    spec_file.write_text("# Spec 001", encoding="utf-8")
+    task = SubTask(
+        id="task-1",
+        repo="org/repo",
+        branch="agent/spec-001-repo",
+        wave=1,
+        issue_number=123,
+    )
+    prompt = runner.build_prompt(task=task, spec_path=spec_file)
+    assert "Closes #123" in prompt
+
+
+
 
 

@@ -17,6 +17,7 @@ local.mk
 .harness/*.yaml
 .harness/*.yml
 .harness/*.md
+.harness/*.json
 .harness/hooks/
 .harness/sensors/
 .env

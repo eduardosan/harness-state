@@ -946,6 +946,67 @@ def get_spec_cmd(spec_id: str) -> None:
     run_get_spec(spec_id=spec_id)
 
 
+@main.command(name="judge")
+@click.option(
+    "--local",
+    is_flag=True,
+    default=False,
+    help="Executa a auto-avaliação do Judge Local contra as 3 regras normativas",
+)
+@click.option(
+    "--fast",
+    is_flag=True,
+    default=False,
+    help="Executa o Judge em voto único consolidado (< 1 min)",
+)
+@click.option(
+    "--out-file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Arquivo de saída com o resultado consolidado do Judge em JSON",
+)
+@click.option(
+    "--repo-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Diretório do repositório para avaliação local",
+)
+@click.option(
+    "--base-ref",
+    default=None,
+    help="Referência Git base para comparação do diff no Judge Local",
+)
+def judge_cmd(
+    local: bool,
+    fast: bool,
+    out_file: Path | None,
+    repo_dir: Path | None,
+    base_ref: str | None,
+) -> None:
+    """Executa o LLM-as-a-Judge canônico ou a auto-avaliação local."""
+    from harness_state.judge import evaluate_local_diff
+
+    if local:
+        eval_result = evaluate_local_diff(
+            repo_dir=repo_dir,
+            base_ref=base_ref,
+            out_file=out_file,
+        )
+        if eval_result.is_approved:
+            console.print(
+                "[bold green]✓ Auto-avaliação do Judge Local: APROVADO "
+                f"({eval_result.compliance_score}/100)[/bold green]"
+            )
+            raise SystemExit(0)
+        console.print(
+            "[bold red]✗ Auto-avaliação do Judge Local: REJEITADO "
+            f"({eval_result.compliance_score}/100)[/bold red]"
+        )
+        for violation in eval_result.violations:
+            console.print(f"  [red]• {violation}[/red]")
+        raise SystemExit(1)
+
+
 # ============================================================
 # Flywheel Management Commands (Onda 1 - SPEC-009)
 # ============================================================

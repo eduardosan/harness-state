@@ -1,0 +1,142 @@
+name: Reusable Tag Code Evaluation and Gate
+
+# Self-validation soberana: avaliação consolidada pré-release com LLM-as-a-Judge
+# executado em voto único rápido (< 1 min) sobre o diff da tag candidata.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag gerada ou versão candidata a ser avaliada"
+        required: true
+        type: string
+      fast:
+        description: "Executar avaliação consolidada em voto único (< 1 min)"
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      status:
+        description: "Veredito da avaliação (APPROVED ou REJECTED)"
+        value: ${{ jobs.evaluate-tag-release.outputs.status }}
+      compliance_score:
+        description: "Score de conformidade da release (0-100)"
+        value: ${{ jobs.evaluate-tag-release.outputs.compliance_score }}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a ser avaliada manualmente (ex: v0.4.0)"
+        required: true
+        type: string
+      fast:
+        description: "Executar avaliação rápida com voto único"
+        required: false
+        type: boolean
+        default: true
+
+env:
+  LLM_INTERNAL_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
+  LLM_EXTERNAL_BASE_URL: ${{ vars.LLM_EXTERNAL_BASE_URL }}
+  LLM_DEFAULT_MODEL: ${{ vars.LLM_DEFAULT_MODEL }}
+  LLM_JUDGE_MODEL: ${{ vars.LLM_JUDGE_MODEL }}
+  LLM_JUDGE_FALLBACK_MODEL: ${{ vars.LLM_JUDGE_FALLBACK_MODEL }}
+  PYTHONPATH: src
+
+jobs:
+  guidelines-eval:
+    name: "Autoavaliação Paralela de Diretrizes (DeepEval)"
+    uses: ./.github/workflows/reusable-spec-ci.yml
+    secrets: inherit
+
+  evaluate-tag-release:
+    name: "LLM-as-a-Judge da Release (Voto Consolidado Único)"
+    needs: guidelines-eval
+    runs-on: self-hosted
+    timeout-minutes: 15
+    outputs:
+      status: ${{ steps.judge-step.outputs.status }}
+      compliance_score: ${{ steps.judge-step.outputs.compliance_score }}
+    steps:
+      - name: Checkout com Histórico Completo de Tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sincronizar Dependências com uv
+        run: uv sync
+
+      - name: Determinar Tags e Gerar Diff da Release
+        id: release-info
+        run: |
+          set -e
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          if [ -n "${{ inputs.tag }}" ]; then
+            CURRENT_TAG="${{ inputs.tag }}"
+          fi
+          echo "tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Avaliando a tag/versao candidata: ${CURRENT_TAG}"
+
+          git fetch --tags --force || true
+          mkdir -p release_artifacts
+
+          if git rev-parse "${CURRENT_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${CURRENT_TAG} encontrada no git (avaliacao pos-tag)."
+            PREV_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -A 1 "^${CURRENT_TAG}$" | tail -n 1)
+            if [ -n "${PREV_TAG}" ] && [ "${PREV_TAG}" != "${CURRENT_TAG}" ]; then
+              echo "Tag anterior identificada: ${PREV_TAG}"
+              git diff "${PREV_TAG}...${CURRENT_TAG}" > release_artifacts/release_diff.patch
+            else
+              echo "Primeira tag ou tag sem antecessora direta. Usando commit da tag."
+              git show "${CURRENT_TAG}" > release_artifacts/release_diff.patch
+            fi
+          else
+            echo "Tag ${CURRENT_TAG} e uma versao candidata (pre-release gate)."
+            LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+            if [ -n "${LATEST_TAG}" ]; then
+              echo "Ultima tag existente no git: ${LATEST_TAG}"
+              git diff "${LATEST_TAG}..HEAD" > release_artifacts/release_diff.patch
+            else
+              echo "Nenhuma tag anterior encontrada. Gerando diff completo da arvore."
+              git diff $(git hash-object -t tree /dev/null)..HEAD > release_artifacts/release_diff.patch
+            fi
+          fi
+          echo "Diff gerado com $(wc -l < release_artifacts/release_diff.patch) linhas."
+
+      - name: "Autoavaliação LLM-as-a-Judge Fast Consolidada"
+        id: judge-step
+        env:
+          OPENAI_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OLLAMA_API_KEY || secrets.OPENAI_API_KEY || 'ollama' }}
+          LLM_API_KEY: ${{ secrets.OLLAMA_API_KEY || secrets.OPENAI_API_KEY || 'ollama' }}
+          DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+          DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE: "600"
+        run: |
+          FAST_FLAG=""
+          if [ "${{ inputs.fast }}" = "true" ]; then
+            FAST_FLAG="--fast"
+          fi
+          uv run python -m harness_state.judge \
+            $FAST_FLAG \
+            --spec docs/architecture/code-evaluation-flow.md \
+            --diffs release_artifacts/release_diff.patch \
+            --spec-id "TAG-${{ steps.release-info.outputs.tag }}" \
+            --out-file release_artifacts/evaluation_report.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload dos Artefatos de Avaliação da Tag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tag-evaluation-report-${{ steps.release-info.outputs.tag }}
+          path: release_artifacts/evaluation_report.json
+
+      - name: Validar Veredito da Tag
+        run: |
+          STATUS="${{ steps.judge-step.outputs.status }}"
+          SCORE="${{ steps.judge-step.outputs.compliance_score }}"
+          echo "Veredito da Release: ${STATUS} (Score: ${SCORE}/100)"
+          if [[ "${STATUS}" != "APPROVED" ]]; then
+            echo "::error::Gate de autoavaliacao da tag reprovou a conformidade da versao!"
+            exit 1
+          fi
+          echo "Release aprovada integralmente no Gate de Autoavaliacao de Codigo!"

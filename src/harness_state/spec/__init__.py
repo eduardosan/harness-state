@@ -8,6 +8,8 @@ from harness_state.spec.fanout import (
     filter_relevant_spec_sections,
     generate_repo_spec,
     mark_repo_spec_status,
+    mark_subtask_completed_in_spec_file,
+    mark_subtask_completed_in_spec_text,
     save_repo_spec,
     sync_spoke_spec_to_hub,
 )
@@ -66,6 +68,8 @@ __all__ = [
     "get_spec_reference_dir",
     "line_matches_diff_target_suffix",
     "mark_repo_spec_status",
+    "mark_subtask_completed_in_spec_file",
+    "mark_subtask_completed_in_spec_text",
     "merge_refined_spec",
     "resolve_spec_file_path",
     "resolve_specs_directory",
