@@ -14,6 +14,7 @@ def test_reusable_workflows_exist_and_are_valid_yaml() -> None:
         "reusable-spec-ci.yml",
         "reusable-tag-evaluation.yml",
         "reusable-release.yml",
+        "reusable-test.yml",
     ]
 
     for workflow_name in reusable_workflows:

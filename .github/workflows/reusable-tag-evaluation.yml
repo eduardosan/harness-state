@@ -2,19 +2,39 @@ name: Reusable Tag Code Evaluation and Gate
 
 # Self-validation soberana: avaliação consolidada pré-release com LLM-as-a-Judge
 # executado em voto único rápido (< 1 min) sobre o diff da tag candidata.
+# Suporta execução in-tree ou avaliação cross-repo parametrizada (SPEC-012).
 
 on:
   workflow_call:
     inputs:
       tag:
-        description: "Tag gerada ou versão candidata a ser avaliada"
+        description: "Tag gerada ou versão candidata a ser avaliada (ex: v1.2.0)"
         required: true
         type: string
+      target_repo:
+        description: "Repositório do spoke a ser avaliado (opcional; vazio indica o repositório atual)"
+        required: false
+        type: string
+        default: ""
+      commit_sha:
+        description: "SHA exato do commit vinculado à tag (opcional)"
+        required: false
+        type: string
+        default: ""
       fast:
         description: "Executar avaliação consolidada em voto único (< 1 min)"
         required: false
         type: boolean
         default: true
+      runs_on:
+        description: "Tipo de runner para execução do gate"
+        required: false
+        type: string
+        default: "self-hosted"
+    secrets:
+      token:
+        description: "Token do GitHub App ou GitHub Token com acesso ao target_repo"
+        required: false
     outputs:
       status:
         description: "Veredito da avaliação (APPROVED ou REJECTED)"
@@ -28,11 +48,26 @@ on:
         description: "Tag a ser avaliada manualmente (ex: v0.4.0)"
         required: true
         type: string
+      target_repo:
+        description: "Repositório do spoke a ser avaliado (opcional)"
+        required: false
+        type: string
+        default: ""
+      commit_sha:
+        description: "SHA exato do commit vinculado à tag (opcional)"
+        required: false
+        type: string
+        default: ""
       fast:
         description: "Executar avaliação rápida com voto único"
         required: false
         type: boolean
         default: true
+      runs_on:
+        description: "Tipo de runner para execução do gate"
+        required: false
+        type: string
+        default: "self-hosted"
 
 env:
   LLM_INTERNAL_BASE_URL: ${{ vars.LLM_INTERNAL_BASE_URL }}
@@ -45,13 +80,15 @@ env:
 jobs:
   guidelines-eval:
     name: "Autoavaliação Paralela de Diretrizes (DeepEval)"
+    if: inputs.target_repo == ''
     uses: ./.github/workflows/reusable-spec-ci.yml
     secrets: inherit
 
   evaluate-tag-release:
     name: "LLM-as-a-Judge da Release (Voto Consolidado Único)"
+    if: always() && (needs.guidelines-eval.result == 'success' || inputs.target_repo != '')
     needs: guidelines-eval
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runs_on || 'self-hosted' }}
     timeout-minutes: 15
     outputs:
       status: ${{ steps.judge-step.outputs.status }}
@@ -60,10 +97,17 @@ jobs:
       - name: Checkout com Histórico Completo de Tags
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.target_repo != '' && inputs.target_repo || github.repository }}
+          token: ${{ secrets.token != '' && secrets.token || github.token }}
+          ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || '' }}
           fetch-depth: 0
 
       - name: Sincronizar Dependências com uv
-        run: uv sync
+        run: |
+          uv sync || true
+          if ! uv run python -c "import harness_state" >/dev/null 2>&1; then
+            uv pip install "git+https://github.com/eduardosan/harness-state.git" || true
+          fi
 
       - name: Determinar Tags e Gerar Diff da Release
         id: release-info
@@ -78,6 +122,13 @@ jobs:
 
           git fetch --tags --force || true
           mkdir -p release_artifacts
+
+          TARGET_REF="${{ inputs.commit_sha }}"
+          if [ -z "${TARGET_REF}" ]; then
+            TARGET_REF="HEAD"
+          fi
+          CURRENT_SHA=$(git rev-parse "${TARGET_REF}")
+          echo "commit_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
 
           if git rev-parse "${CURRENT_TAG}" >/dev/null 2>&1; then
             echo "Tag ${CURRENT_TAG} encontrada no git (avaliacao pos-tag)."
@@ -94,10 +145,10 @@ jobs:
             LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
             if [ -n "${LATEST_TAG}" ]; then
               echo "Ultima tag existente no git: ${LATEST_TAG}"
-              git diff "${LATEST_TAG}..HEAD" > release_artifacts/release_diff.patch
+              git diff "${LATEST_TAG}..${TARGET_REF}" > release_artifacts/release_diff.patch
             else
               echo "Nenhuma tag anterior encontrada. Gerando diff completo da arvore."
-              git diff $(git hash-object -t tree /dev/null)..HEAD > release_artifacts/release_diff.patch
+              git diff $(git hash-object -t tree /dev/null).."${TARGET_REF}" > release_artifacts/release_diff.patch
             fi
           fi
           echo "Diff gerado com $(wc -l < release_artifacts/release_diff.patch) linhas."
@@ -117,7 +168,6 @@ jobs:
           fi
           uv run python -m harness_state.judge \
             $FAST_FLAG \
-            --spec docs/architecture/code-evaluation-flow.md \
             --diffs release_artifacts/release_diff.patch \
             --spec-id "TAG-${{ steps.release-info.outputs.tag }}" \
             --out-file release_artifacts/evaluation_report.json \
@@ -130,11 +180,29 @@ jobs:
           name: tag-evaluation-report-${{ steps.release-info.outputs.tag }}
           path: release_artifacts/evaluation_report.json
 
-      - name: Validar Veredito da Tag
+      - name: Emitir Status API e Validar Veredito da Tag
+        env:
+          GH_TOKEN: ${{ secrets.token || github.token }}
         run: |
           STATUS="${{ steps.judge-step.outputs.status }}"
           SCORE="${{ steps.judge-step.outputs.compliance_score }}"
           echo "Veredito da Release: ${STATUS} (Score: ${SCORE}/100)"
+
+          if [ -n "${{ inputs.target_repo }}" ]; then
+            COMMIT_SHA="${{ steps.release-info.outputs.commit_sha }}"
+            STATE="success"
+            DESC="Tag gate aprovado pelo Harness Judge"
+            if [[ "${STATUS}" != "APPROVED" ]]; then
+              STATE="failure"
+              DESC="Tag gate reprovado pelo Harness Judge (score ${SCORE}/100)"
+            fi
+            echo "Registrando status API no commit ${COMMIT_SHA} de ${{ inputs.target_repo }}..."
+            gh api "repos/${{ inputs.target_repo }}/statuses/${COMMIT_SHA}" \
+              -f state="${STATE}" \
+              -f context="flywheel/tag-gate" \
+              -f description="${DESC}" || echo "Aviso: Falha ao registrar Commit Status via GitHub API"
+          fi
+
           if [[ "${STATUS}" != "APPROVED" ]]; then
             echo "::error::Gate de autoavaliacao da tag reprovou a conformidade da versao!"
             exit 1
