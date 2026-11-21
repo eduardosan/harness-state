@@ -11,4 +11,8 @@ lint:
 test:
     go test ./...
 
+# Auto-avaliacao local do diff contra as regras normativas do Judge
+judge-local:
+    harness judge --local
+
 verify: check lint test

@@ -1,0 +1,14 @@
+name: Bug Post-Merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  post-merge:
+    if: github.event.pull_request.merged == true
+    permissions:
+      contents: read
+    uses: paralax-ia/actions-workflows/.github/workflows/bug-post-merge.yml@main
+    secrets:
+      FLYWHEEL_DISPATCH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}

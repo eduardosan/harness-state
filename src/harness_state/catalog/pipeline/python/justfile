@@ -28,5 +28,9 @@ lint:
 test:
     uv run pytest tests
 
+# Auto-avaliacao local do diff contra as regras normativas do Judge
+judge-local:
+    uv run harness judge --local
+
 # Validacao completa: criterio de aceitacao do diff
 verify: check lint test

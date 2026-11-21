@@ -84,9 +84,9 @@ Esta especificação define:
 
 ## 2. Escopo e Repositórios Afetados
 
-- [ ] **Sub-tarefa 1 (`eduardosan/harness-spec-hub`):** [Onda 1] Atualizar o template padrão `SPEC-TEMPLATE.md`, as diretrizes de governança de Living Specs, as regras de descoberta semântica no catálogo e a automação do mapa de capacidades em `capabilities/` durante a aprovação formal de specs (Gate 2).
-- [ ] **Sub-tarefa 2 (`eduardosan/harness-state`):** [Onda 2] Implementar motor de descoberta prévia de specs (`SpecDiscoveryEngine`), modelos de revisão (`SpecRevision`), motor de reconciliação de deltas (`SpecEvolutionEngine`), comando `harness spec update`, enriquecimento do comando `harness spec plan` com roteamento inteligente, gatilho de sincronização do mapa de capacidades no comando `harness spec approve` mantendo a sessão/identidade do agente autor, e registrar prompts canônicos em `src/harness_state/runtimes/coder_prompts.py`.
-- [ ] **Sub-tarefa 3 (`eduardosan/agentic-flywheel`):** [Onda 2] Adaptar o fan-out incremental (`src/flywheel/spec_fanout.py`) para emitir sub-specs de evolução sem colidir com branches de tarefas já concluídas, e integrar o Coder Runtime para executar a evolução de código com TDD Fail-First.
+- [x] **Sub-tarefa 1 (`eduardosan/harness-spec-hub`):** [Onda 1] Atualizar o template padrão `SPEC-TEMPLATE.md`, as diretrizes de governança de Living Specs, as regras de descoberta semântica no catálogo e a automação do mapa de capacidades em `capabilities/` durante a aprovação formal de specs (Gate 2). [PR #35](https://github.com/eduardosan/harness-spec-hub/pull/35)
+- [x] **Sub-tarefa 2 (`eduardosan/harness-state`):** [Onda 2] Implementar motor de descoberta prévia de specs (`SpecDiscoveryEngine`), modelos de revisão (`SpecRevision`), motor de reconciliação de deltas (`SpecEvolutionEngine`), comando `harness spec update`, enriquecimento do comando `harness spec plan` com roteamento inteligente, gatilho de sincronização do mapa de capacidades no comando `harness spec approve` mantendo a sessão/identidade do agente autor, e registrar prompts canônicos em `src/harness_state/runtimes/coder_prompts.py`. [PR #67](https://github.com/eduardosan/harness-state/pull/67)
+- [x] **Sub-tarefa 3 (`eduardosan/agentic-flywheel`):** [Onda 2] Adaptar o fan-out incremental (`src/flywheel/spec_fanout.py`) para emitir sub-specs de evolução sem colidir com branches de tarefas já concluídas, e integrar o Coder Runtime para executar a evolução de código com TDD Fail-First. [PR #210](https://github.com/eduardosan/agentic-flywheel/pull/210)
 
 ---
 
@@ -186,6 +186,30 @@ class SpecRun(BaseModel):
         if self.status in (TaskState.READY, TaskState.APPROVED):
             self.status = TaskState.IN_PROGRESS
 ```
+
+---
+
+### 3.4. Fluxo de Execução no Comando `plan` e Sincronização no Gate 2
+
+#### Fluxo 1: Descoberta Inteligente no `harness spec plan`
+1. Quando o operador executa `harness spec plan "<titulo_ou_prompt>"`:
+2. O `SpecDiscoveryEngine` é acionado **antes de criar qualquer arquivo**.
+3. Ele varre `specs/SPEC-*.md` comparando título, capacidade, bounded context e corpo semântico.
+4. **Decisão:**
+   - **Similaridade Alta ($\ge 0.8$):** Notifica o operador que uma spec existente correlacionada foi encontrada e sugere automaticamente a evolução da spec existente (`harness spec update <spec_id> -p ...`).
+   - **Similaridade Média ($0.5 \le score < 0.8$):** Apresenta opções interativas (HITL): `[1] Evoluir SPEC-XXX, [2] Criar nova spec independente`.
+   - **Similaridade Baixa ($< 0.5$):** Confirma a criação de uma nova spec (`SPEC-YYY`) a partir do template sem risco de fragmentação.
+
+#### Fluxo 2: Sincronização do Mapa de Capacidades no Gate 2 (`harness spec approve`)
+1. O status da spec transiciona para `APPROVED`.
+2. O orquestrador detecta a capability declarada no frontmatter (`capability:`).
+3. O orquestrador invoca **o mesmo agente autor** que gerou/refinou a spec (usando `SpecRun.author_agent` e `SpecRun.author_model`), fornecendo o prompt `harness-state/capability_map_sync`.
+4. O agente:
+   - Lê `capabilities/<capability_id>/capability.yaml` e a spec aprovada.
+   - Avalia se há novos termos de linguagem ubíqua (§1), novos repositórios/serviços (§2) ou contratos técnicos (§3).
+   - Registra a spec na lista `specs` da capability com `status: APPROVED`.
+   - Atualiza `products/<product_id>.yaml` caso a spec adicione suporte a novos produtos.
+5. Se houver alterações necessárias, o agente escreve o `capability.yaml` atualizado e registra o commit na branch do spec-hub antes de disparar o fan-out de código.
 
 ---
 
@@ -303,7 +327,7 @@ Execution Protocol:
 ### Cenário 4: Sincronização do mapa de capacidades pelo mesmo agente autor na aprovação (Gate 2)
 - **Dado** uma especificação `SPEC-011` planejada pelo agente `antigravity` vinculada à capability `agent-workflow-platform`
 - **Quando** o operador executa `harness spec approve SPEC-011`
-- **Então** o orquestrador deve invocar o mesmo agente (`antigravity`) com a instrução `spec/capability_map_sync`
+- **Então** o orquestrador deve invocar o mesmo agente (`antigravity`) com a instrução `harness-state/capability_map_sync`
 - **E** o agente deve inspecionar se a spec introduziu novos termos ou contratos
 - **E** o arquivo `capabilities/agent-workflow-platform/capability.yaml` deve ser atualizado incluindo `SPEC-011` em `specs` com status `APPROVED` e quaisquer novos termos de linguagem ubíqua.
 

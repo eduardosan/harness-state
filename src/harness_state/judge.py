@@ -14,10 +14,13 @@ import argparse
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import traceback
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -153,6 +156,287 @@ class JudgeEvaluation:
     recommendations: list[str]
 
 
+@dataclass(frozen=True)
+class LocalJudgeEvaluation:
+    """Resultado da auto-avaliação do Judge Local no spoke."""
+
+    status: str
+    compliance_score: int
+    is_approved: bool
+    summary: str
+    rules: dict[str, Any]
+    violations: list[str]
+    recommendations: list[str]
+    evaluated_at: str
+    mode: str = "local_judge"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte a avaliação em dicionário serializável."""
+        return asdict(self)
+
+
+def get_git_diff(
+    repo_dir: Path | None = None,
+    base_ref: str | None = None,
+) -> str:
+    """Obtém o diff Git local do repositório alvo.
+
+    Args:
+        repo_dir: Diretório raiz do repositório (padrão: Path.cwd()).
+        base_ref: Referência Git base opcional (ex: origin/main, HEAD~1).
+
+    Returns:
+        String contendo a saída unificada do diff do Git.
+    """
+    target_dir = repo_dir or Path.cwd()
+    cmd = ["git", "diff", base_ref] if base_ref else ["git", "diff", "HEAD"]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=target_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        diff_text = proc.stdout
+        if not diff_text.strip() and not base_ref:
+            fallback_proc = subprocess.run(
+                ["git", "diff", "origin/main..."],
+                cwd=target_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            diff_text = fallback_proc.stdout
+        return diff_text
+    except OSError:
+        return ""
+
+
+def check_rule1_test_integrity(lines: list[str]) -> list[str]:
+    """Valida a Regra 1: Integridade de Testes e Gates.
+
+    Detecta exclusão ou enfraquecimento de testes/asserções, tais como
+    'assert True' adicionado, anotações de skip indevidas ou '|| true' em comandos de teste.
+
+    Args:
+        lines: Linhas do diff Git.
+
+    Returns:
+        Lista de violações da Regra 1 identificadas.
+    """
+    violations: list[str] = []
+    for line in lines:
+        if line.startswith("+") and not line.startswith("+++"):
+            content = line[1:].strip()
+            if re.match(r"^assert\s+True\b", content) or re.match(r"^assert\s+1\b", content):
+                violations.append(
+                    "Regra 1 (Integridade de Testes): Asserção enfraquecida "
+                    f"detectada no diff ('{content}')."
+                )
+            if re.search(r"@pytest\.mark\.(skip|xfail)\b", content):
+                violations.append(
+                    "Regra 1 (Integridade de Testes): Teste desativado com skip/xfail "
+                    f"detectado no diff ('{content}')."
+                )
+            if re.search(
+                r"(\bpytest\b|\bjust\s+test\b|\bgo\s+test\b|\bnpm\s+test\b).*\b\|\|\s*true\b",
+                content,
+            ):
+                violations.append(
+                    "Regra 1 (Integridade de Gates): Supressão de falha em comando de teste "
+                    f"detectada no diff ('{content}')."
+                )
+    return violations
+
+
+def check_rule2_line_violation(content: str, in_except: bool) -> tuple[str | None, bool]:
+    """Valida se uma linha de código adicionada viola a Regra 2.
+
+    Args:
+        content: Conteúdo da linha adicionada.
+        in_except: Indica se o contexto atual é logo após uma cláusula except.
+
+    Returns:
+        Tupla com violação identificada (ou None) e próximo estado de in_except.
+    """
+    if re.match(r"^except\s*(Exception|BaseException)?\s*:\s*pass\b", content):
+        msg = (
+            "Regra 2 (Não-mascaramento de Erros): Captura silenciosa com 'pass' "
+            f"detectada no diff ('{content}')."
+        )
+        return (msg, False)
+    if re.match(r"^except\s*:\s*$", content):
+        msg = (
+            "Regra 2 (Não-mascaramento de Erros): Cláusula bare 'except:' "
+            "sem tipo de exceção detectada no diff."
+        )
+        return (msg, False)
+    if re.match(r"^except(\s+[a-zA-Z0-9_.]*)?\s*:\s*$", content):
+        return (None, True)
+    if in_except and content in {"pass", "continue"}:
+        msg = (
+            "Regra 2 (Não-mascaramento de Erros): Exceção suprimida com "
+            f"'{content}' no diff."
+        )
+        return (msg, False)
+    return (None, False)
+
+
+def check_rule2_error_masking(lines: list[str]) -> list[str]:
+    """Valida a Regra 2: Não-mascaramento de Exceções.
+
+    Detecta 'except: pass', 'except Exception: pass', blocos vazios de except
+    ou exceções suprimidas silenciosamente.
+
+    Args:
+        lines: Linhas do diff Git.
+
+    Returns:
+        Lista de violações da Regra 2 identificadas.
+    """
+    violations: list[str] = []
+    in_except = False
+    for line in lines:
+        if not line.startswith("+") or line.startswith("+++"):
+            in_except = False
+            continue
+        content = line[1:].strip()
+        violation, in_except = check_rule2_line_violation(content, in_except)
+        if violation:
+            violations.append(violation)
+    return violations
+
+
+def check_rule3_contract_preservation(lines: list[str]) -> list[str]:
+    """Valida a Regra 3: Preservação de Contratos Públicos.
+
+    Detecta remoção de funções, métodos ou classes públicas sem substituição.
+
+    Args:
+        lines: Linhas do diff Git.
+
+    Returns:
+        Lista de violações da Regra 3 identificadas.
+    """
+    violations: list[str] = []
+    removed_public_defs: set[str] = set()
+    added_public_defs: set[str] = set()
+
+    for line in lines:
+        if line.startswith("-") and not line.startswith("---"):
+            content = line[1:].strip()
+            match = re.match(r"^(def|class)\s+([a-zA-Z0-9]+)\b", content)
+            if match and not match.group(2).startswith("_"):
+                removed_public_defs.add(match.group(2))
+        elif line.startswith("+") and not line.startswith("+++"):
+            content = line[1:].strip()
+            match = re.match(r"^(def|class)\s+([a-zA-Z0-9]+)\b", content)
+            if match and not match.group(2).startswith("_"):
+                added_public_defs.add(match.group(2))
+
+    breaking = removed_public_defs - added_public_defs
+    for name in sorted(breaking):
+        violations.append(
+            f"Regra 3 (Preservação de Contratos): Símbolo público '{name}' "
+            "removido do contrato sem substituição direta."
+        )
+    return violations
+
+
+def validate_normative_rules(diff_text: str) -> tuple[bool, list[str]]:
+    """Valida o diff contra as 3 regras normativas do Judge (SPEC-009G).
+
+    Args:
+        diff_text: Conteúdo textual do diff unificado.
+
+    Returns:
+        Tupla (passed, violations) onde passed é True se nenhuma violação for encontrada.
+    """
+    lines = diff_text.splitlines()
+    violations: list[str] = []
+    violations.extend(check_rule1_test_integrity(lines))
+    violations.extend(check_rule2_error_masking(lines))
+    violations.extend(check_rule3_contract_preservation(lines))
+
+    passed = len(violations) == 0
+    return passed, violations
+
+
+def evaluate_local_diff(
+    diff_text: str | None = None,
+    repo_dir: Path | None = None,
+    base_ref: str | None = None,
+    out_file: Path | None = None,
+) -> LocalJudgeEvaluation:
+    """Executa a auto-avaliação do Judge Local e emite .harness/verification-summary.json.
+
+    Args:
+        diff_text: Conteúdo opcional do diff; se None, consulta o repositório Git.
+        repo_dir: Raiz opcional do repositório spoke local.
+        base_ref: Referência Git base para comparação.
+        out_file: Caminho opcional do arquivo de sumário a gravar.
+
+    Returns:
+        Instância de LocalJudgeEvaluation com o veredito.
+    """
+    effective_repo = repo_dir or Path.cwd()
+    resolved_diff = diff_text if diff_text is not None else get_git_diff(effective_repo, base_ref)
+    passed, violations = validate_normative_rules(resolved_diff)
+
+    now_iso = datetime.now(UTC).isoformat()
+    rule1_violations = [v for v in violations if "Regra 1" in v]
+    rule2_violations = [v for v in violations if "Regra 2" in v]
+    rule3_violations = [v for v in violations if "Regra 3" in v]
+
+    rules_dict = {
+        "rule_1_test_integrity": {
+            "name": FUNCTIONAL_GATE_RULES[0][0],
+            "status": "FAILED" if rule1_violations else "PASSED",
+            "violations": rule1_violations,
+        },
+        "rule_2_no_error_masking": {
+            "name": FUNCTIONAL_GATE_RULES[1][0],
+            "status": "FAILED" if rule2_violations else "PASSED",
+            "violations": rule2_violations,
+        },
+        "rule_3_public_contract": {
+            "name": FUNCTIONAL_GATE_RULES[2][0],
+            "status": "FAILED" if rule3_violations else "PASSED",
+            "violations": rule3_violations,
+        },
+    }
+
+    summary = (
+        "Auto-avaliação do Judge Local aprovada com 100% de conformidade."
+        if passed
+        else f"Auto-avaliação do Judge Local reprovada: {len(violations)} violações detectadas."
+    )
+    compliance_score = 100 if passed else max(0, 100 - len(violations) * 25)
+
+    evaluation = LocalJudgeEvaluation(
+        status="APPROVED" if passed else "REJECTED",
+        compliance_score=compliance_score,
+        is_approved=passed,
+        summary=summary,
+        rules=rules_dict,
+        violations=violations,
+        recommendations=[] if passed else ["Corrigir violações normativas antes da abertura de PR."],
+        evaluated_at=now_iso,
+        mode="local_judge",
+    )
+
+    target_out = out_file or (effective_repo / ".harness" / "verification-summary.json")
+    target_out.parent.mkdir(parents=True, exist_ok=True)
+    target_out.write_text(
+        json.dumps(evaluation.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    return evaluation
+
+
 def build_judge_model(
     base_url: str = "",
     api_key: str = "",
@@ -271,7 +555,7 @@ class FunctionalRuleBattery:
         verdicts: list[tuple[str, int, bool, str]] = []
         for rule in self.rules:
             rule_score, rule_ok, rule_reason = measure_metric_with_majority(
-                rule, test_case, votes=FUNCTIONAL_JUDGE_VOTES
+                rule, test_case, votes=resolve_functional_judge_votes()
             )
             verdicts.append((rule.name, rule_score, rule_ok, rule_reason))
         passed = [v for v in verdicts if v[2]]
@@ -913,6 +1197,24 @@ def compact_diff_for_functional_stage(
     return compacted
 
 
+def resolve_functional_judge_votes(fast_mode: bool = False) -> int:
+    """Determina o número de votos para o Gate Funcional.
+
+    Args:
+        fast_mode: Se True, força voto único consolidado (< 1 min).
+
+    Returns:
+        1 para voto único consolidado ou 3 para maioria.
+    """
+    if (
+        fast_mode
+        or os.environ.get("JUDGE_FAST_EVALUATION")
+        or os.environ.get("JUDGE_SINGLE_VOTE")
+    ):
+        return 1
+    return int(os.environ.get("JUDGE_VOTES", "3"))
+
+
 FUNCTIONAL_JUDGE_VOTES = 3
 
 FLUENT_STAGE_INPUT_PREAMBLE = (
@@ -1168,7 +1470,7 @@ def run_judge_metrics_pipeline(
         actual_output=compacted_diff,
     )
     func_votes: list[tuple[int, bool, str]] = []
-    for _ in range(FUNCTIONAL_JUDGE_VOTES):
+    for _ in range(resolve_functional_judge_votes()):
         functional_metric.measure(func_test_case)
         func_votes.append(
             (
@@ -1730,9 +2032,35 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--diffs",
-        required=True,
+        required=False,
+        default=None,
         type=Path,
         help="Arquivo de diffs agregados dos repositorios",
+    )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        default=False,
+        help="Executa a auto-avaliação do Judge Local contra as 3 regras normativas",
+    )
+    parser.add_argument(
+        "--fast",
+        "--single-vote",
+        action="store_true",
+        dest="fast",
+        default=False,
+        help="Executa o Judge em voto único consolidado (< 1 min)",
+    )
+    parser.add_argument(
+        "--repo-dir",
+        type=Path,
+        default=None,
+        help="Diretório raiz do repositório para o Judge Local",
+    )
+    parser.add_argument(
+        "--base-ref",
+        default=None,
+        help="Referência Git base para comparação do diff no Judge Local",
     )
     default_base_url = (
         os.environ.get("LLM_BASE_URL", "")
@@ -1783,6 +2111,89 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
+def execute_local_judge_cli(args: argparse.Namespace) -> int:
+    """Executa a autoavaliação do Judge Local no spoke via CLI.
+
+    Args:
+        args: Argumentos parseados da linha de comando.
+
+    Returns:
+        0 se aprovado, 1 se reprovado.
+    """
+    local_eval = evaluate_local_diff(
+        repo_dir=args.repo_dir,
+        base_ref=args.base_ref,
+        out_file=args.out_file,
+    )
+    print(
+        f"Auto-avaliação do Judge Local: {local_eval.status} "
+        f"(Score: {local_eval.compliance_score}/100)"
+    )
+    if local_eval.violations:
+        print("Violações normativas detectadas:")
+        for violation in local_eval.violations:
+            print(f" - {violation}")
+    if local_eval.is_approved:
+        return 0
+    return 1
+
+
+def execute_server_evaluation(args: argparse.Namespace) -> JudgeEvaluation:
+    """Executa a avaliação server-side de especificação e/ou linguagem.
+
+    Args:
+        args: Argumentos parseados da linha de comando.
+
+    Returns:
+        Instância consolidada de JudgeEvaluation.
+    """
+    if args.spec and not args.language:
+        return evaluate_spec_diff(
+            spec_path=args.spec,
+            diffs_path=args.diffs,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+    if args.language and not args.spec:
+        return evaluate_language_diff(
+            diffs_path=args.diffs,
+            language=args.language,
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            spec_id=args.spec_id,
+            fallback_model=args.fallback_model,
+        )
+    assert args.spec is not None
+    assert args.language is not None
+    spec_eval = evaluate_spec_diff(
+        spec_path=args.spec,
+        diffs_path=args.diffs,
+        base_url=args.base_url,
+        api_key=args.api_key,
+        model=args.model,
+        spec_id=args.spec_id,
+        fallback_model=args.fallback_model,
+    )
+    lang_eval = evaluate_language_diff(
+        diffs_path=args.diffs,
+        language=args.language,
+        base_url=args.base_url,
+        api_key=args.api_key,
+        model=args.model,
+        spec_id=args.spec_id,
+        fallback_model=args.fallback_model,
+    )
+    return consolidate_evaluations(
+        spec_eval=spec_eval,
+        lang_eval=lang_eval,
+        spec_id=args.spec_id,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Ponto de entrada do executavel de julgamento de especificacoes e linguagens.
 
@@ -1794,58 +2205,26 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
+    if args.local:
+        return execute_local_judge_cli(args)
+
+    if getattr(args, "fast", False):
+        os.environ["JUDGE_FAST_EVALUATION"] = "1"
+        os.environ["JUDGE_SINGLE_VOTE"] = "1"
+
     if not args.spec and not args.language:
         sys.stderr.write(
-            "Erro: É necessário especificar ao menos --spec ou --language.\n"
+            "Erro: É necessário especificar ao menos --spec ou --language (ou --local para avaliação local).\n"
         )
         return 2
 
-    if args.spec and not args.language:
-        evaluation = evaluate_spec_diff(
-            spec_path=args.spec,
-            diffs_path=args.diffs,
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            spec_id=args.spec_id,
-            fallback_model=args.fallback_model,
+    if not args.diffs:
+        sys.stderr.write(
+            "Erro: É necessário especificar --diffs para avaliação server-side.\n"
         )
-    elif args.language and not args.spec:
-        evaluation = evaluate_language_diff(
-            diffs_path=args.diffs,
-            language=args.language,
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            spec_id=args.spec_id,
-            fallback_model=args.fallback_model,
-        )
-    else:
-        assert args.spec is not None
-        assert args.language is not None
-        spec_eval = evaluate_spec_diff(
-            spec_path=args.spec,
-            diffs_path=args.diffs,
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            spec_id=args.spec_id,
-            fallback_model=args.fallback_model,
-        )
-        lang_eval = evaluate_language_diff(
-            diffs_path=args.diffs,
-            language=args.language,
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            spec_id=args.spec_id,
-            fallback_model=args.fallback_model,
-        )
-        evaluation = consolidate_evaluations(
-            spec_eval=spec_eval,
-            lang_eval=lang_eval,
-            spec_id=args.spec_id,
-        )
+        return 2
+
+    evaluation = execute_server_evaluation(args)
 
     if args.out_file:
         args.out_file.parent.mkdir(parents=True, exist_ok=True)

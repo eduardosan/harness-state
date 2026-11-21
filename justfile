@@ -15,5 +15,9 @@ lint:
 test:
     uv run pytest tests
 
+# Auto-avaliacao local do diff contra as regras normativas do Judge
+judge-local:
+    uv run harness judge --local
+
 # Validacao completa hermetica antes de PRs (mesmo contrato do flywheel)
 verify: check lint test

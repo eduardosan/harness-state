@@ -11,4 +11,8 @@ lint:
 test:
     npm run test -- --run
 
+# Auto-avaliacao local do diff contra as regras normativas do Judge
+judge-local:
+    npx harness judge --local || harness judge --local
+
 verify: check lint test

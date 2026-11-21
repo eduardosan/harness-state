@@ -1,0 +1,146 @@
+name: Reusable Release Workflow
+
+# Orquestração reutilizável de release SemVer com gate soberano e evals rápidos.
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: "Tipo de incremento SemVer (patch, minor, major)"
+        required: false
+        default: "patch"
+        type: string
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Tipo de incremento SemVer (patch, minor, major)"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-groups
+      - name: Tipagem estática (pyright)
+        run: uv run pyright src tests
+      - name: Testes unitários
+        run: uv run pytest tests --no-header -q
+
+  release-candidate:
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      exists: ${{ steps.bump.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Calcular Próxima Versão SemVer
+        id: bump
+        run: |
+          git fetch --tags --force || true
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          echo "Última versão encontrada: $LATEST"
+          VERSION="${LATEST#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          BUMP_TYPE="${{ inputs.bump }}"
+          if [ "$BUMP_TYPE" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$BUMP_TYPE" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
+            echo "Tag $NEXT_TAG já existe."
+            echo "tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  pre-release-eval:
+    name: "Autoavaliação Rápida ANTES do corte (DeepEval + Fast Judge)"
+    needs: release-candidate
+    if: needs.release-candidate.outputs.exists == 'false'
+    uses: ./.github/workflows/reusable-tag-evaluation.yml
+    with:
+      tag: ${{ needs.release-candidate.outputs.tag }}
+      fast: true
+    secrets: inherit
+
+  tag-and-release:
+    name: "Cortar tag e publicar GitHub Release"
+    needs: [release-candidate, pre-release-eval]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Registrar veredito prévio do juiz
+        env:
+          STATUS: ${{ needs.pre-release-eval.outputs.status }}
+          SCORE: ${{ needs.pre-release-eval.outputs.compliance_score }}
+        run: |
+          echo "Gate síncrono: $STATUS (score ${SCORE}/100) — prosseguindo com o corte."
+
+      - name: Checkout da branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sincronizar versão no pyproject se existir
+        env:
+          TAG: ${{ needs.release-candidate.outputs.tag }}
+        run: |
+          if [ -f "pyproject.toml" ]; then
+            sed -i "s/^version = .*/version = \"${TAG#v}\"/" pyproject.toml
+          fi
+
+      - name: Build wheel e sdist se for Python
+        run: |
+          if [ -f "pyproject.toml" ]; then
+            uv build
+          fi
+
+      - name: Criar tag anotada
+        env:
+          TAG: ${{ needs.release-candidate.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rev-parse "$TAG" >/dev/null 2>&1 || git tag -a "$TAG" "${{ github.sha }}" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Criar GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-candidate.outputs.tag }}
+        run: |
+          ARTIFACTS=""
+          if [ -d "dist" ]; then
+            ARTIFACTS="dist/*"
+          fi
+          gh release create "$TAG" $ARTIFACTS --verify-tag --title "$TAG" --generate-notes

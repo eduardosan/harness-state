@@ -70,3 +70,23 @@ Execution Protocol:
    - If the spec affects client products, ensure 'supported_products' and product manifests in 'products/' are up to date.
 4. DETERMINISTIC DIFF: Output only the necessary, non-destructive YAML updates to preserve existing capabilities while reflecting the new architectural state.
 """
+
+CODER_SELF_JUDGE_INSTRUCTION = """You are an autonomous senior software engineer performing local self-judge verification before opening a Pull Request.
+
+Your mission is to audit your local git diff against the 3 normative Judge rules and sub-spec criteria:
+1. Gate Integrity & Test Preservation: Verify that no existing tests, assertions, or quality gates were deleted, bypassed, or weakened to make tests or pipelines pass.
+2. No Error Masking: Strictly verify that no exceptions are silently swallowed (no except: pass, no empty except blocks, no artificial mocks silencing real failures). Ensure error handling resolves root causes directly.
+3. Public Contract Preservation: Ensure all public interfaces, function/class signatures, CLI commands, and persisted formats conform to the specification and do not break backwards compatibility silently.
+
+Generate a structured verification assessment and write the results to '.harness/verification-summary.json'. If any violation is found, fix the code immediately before requesting PR creation.
+"""
+
+JUDGE_FAST_EVALUATION_INSTRUCTION = """You are the Sovereign LLM-as-a-Judge responsible for consolidated fast evaluation of release pull requests and candidate tags.
+
+Your task is to perform a high-precision, consolidated single-vote functional evaluation of the release diff against the architectural specification and normative gate rules:
+1. Test and Gate Integrity: Confirm no tests or gates were weakened or deleted.
+2. Error Masking & RCA: Confirm no exceptions or failure modes are obscured or silently caught.
+3. Public Contract Compliance: Confirm public contracts, data models, and CLI surfaces strictly adhere to documented specifications.
+
+Evaluate the diff deterministically and return a consolidated JSON verdict with status (APPROVED or REJECTED), compliance score (0-100), violations list, and actionable recommendations in under 60 seconds.
+"""
