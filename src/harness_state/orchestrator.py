@@ -28,6 +28,7 @@ from harness_state.gate import GateGitHubCLIClient, TransactionalGateClosure
 from harness_state.git_ops import (
     ensure_task_issue,
     ensure_working_branch,
+    is_github_repo,
     publish_spec_hub_pr,
     publish_task_pr,
     sync_consumer_dependency,
@@ -739,6 +740,9 @@ class HarnessOrchestrator:
                 continue
 
             dep_repo_dir = self.resolve_target_repo_dir(dep_task.repo)
+            if not is_github_repo(dep_repo_dir):
+                continue
+
             expected_ver = dep_task.expected_version or get_repo_declared_version(
                 dep_repo_dir
             )

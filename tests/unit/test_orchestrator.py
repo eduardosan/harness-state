@@ -278,3 +278,76 @@ def test_orchestrator_executa_tarefa_com_pydantic_coder(tmp_path: Path) -> None:
     assert code == 0
     assert "All tests passed" in output
 
+
+def test_check_dependencies_release_skips_non_github_spoke(tmp_path: Path) -> None:
+    """Business Rule: check_dependencies_release não deve bloquear tarefas dependentes de repositórios locais/não-GitHub."""
+    orch = HarnessOrchestrator(project_root=tmp_path)
+    dep_task = SubTask(
+        id="task-2",
+        repo="ansible-hetzner-new",
+        wave=1,
+        branch="agent/task-2",
+        status=TaskState.READY,
+        expected_version="0.1.0",
+    )
+    main_task = SubTask(
+        id="task-3",
+        repo="eduardosan/harness-slack-bot",
+        wave=2,
+        branch="agent/task-3",
+        status=TaskState.PENDING,
+        depends_on=["task-2"],
+    )
+    spec_run = SpecRun(
+        spec_id="SPEC-014",
+        title="Slackbot SDD",
+        author="dev",
+        tasks={"task-2": dep_task, "task-3": main_task},
+    )
+
+    with (
+        patch("harness_state.orchestrator.is_github_repo", return_value=False),
+        patch.object(orch, "resolve_target_repo_dir", return_value=tmp_path / "ansible-hetzner-new"),
+    ):
+        blocked = orch.check_dependencies_release(spec_run, main_task)
+        assert blocked is None
+
+
+def test_check_dependencies_release_blocks_when_github_repo_lacks_tag(tmp_path: Path) -> None:
+    """Business Rule: check_dependencies_release bloqueia quando dependência do GitHub não tem release tag."""
+    orch = HarnessOrchestrator(project_root=tmp_path)
+    dep_task = SubTask(
+        id="task-1",
+        repo="eduardosan/harness-core",
+        wave=1,
+        branch="agent/task-1",
+        status=TaskState.READY,
+        expected_version="0.2.0",
+    )
+    main_task = SubTask(
+        id="task-2",
+        repo="eduardosan/harness-slack-bot",
+        wave=2,
+        branch="agent/task-2",
+        status=TaskState.PENDING,
+        depends_on=["task-1"],
+    )
+    spec_run = SpecRun(
+        spec_id="SPEC-014",
+        title="Slackbot SDD",
+        author="dev",
+        tasks={"task-1": dep_task, "task-2": main_task},
+    )
+
+    with (
+        patch("harness_state.orchestrator.is_github_repo", return_value=True),
+        patch.object(orch, "resolve_target_repo_dir", return_value=tmp_path / "harness-core"),
+        patch("harness_state.orchestrator.sync_repo_release_tags"),
+        patch("harness_state.orchestrator.get_repo_latest_release_tag", return_value=None),
+    ):
+        blocked = orch.check_dependencies_release(spec_run, main_task)
+        assert blocked is not None
+        assert blocked[0].id == "task-1"
+        assert blocked[1] == "0.2.0"
+        assert blocked[2] is None
+
