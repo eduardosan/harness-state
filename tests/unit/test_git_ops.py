@@ -51,6 +51,52 @@ def test_is_github_repo_returns_false_when_no_git_dir(tmp_path: Path) -> None:
     assert result is False
 
 
+def test_is_github_repo_returns_true_when_no_remote_but_slug_has_owner(
+    tmp_path: Path,
+) -> None:
+    """Business Rule: is_github_repo deve retornar True quando sem remote mas com slug owner/repo (ambiente de teste)."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 128
+    mock_proc.stdout = ""
+
+    with patch("subprocess.run", return_value=mock_proc):
+        result = is_github_repo(tmp_path, repo_slug="paralax-ia/paralax-evo-crm")
+        assert result is True
+
+
+def test_is_github_repo_returns_false_when_no_remote_and_slug_has_no_owner(
+    tmp_path: Path,
+) -> None:
+    """Business Rule: is_github_repo deve retornar False quando sem remote e sem owner no slug (ex: infra local)."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 128
+    mock_proc.stdout = ""
+
+    with patch("subprocess.run", return_value=mock_proc):
+        result = is_github_repo(tmp_path, repo_slug="ansible-hetzner-new")
+        assert result is False
+
+
+def test_is_github_repo_prioritizes_non_github_remote_over_slug(tmp_path: Path) -> None:
+    """Business Rule: is_github_repo deve retornar False se origin apontar para host privado mesmo com slug."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stdout = "git+ssh://git@git.internal.example.com/trab/custom.git\n"
+
+    with patch("subprocess.run", return_value=mock_proc):
+        result = is_github_repo(tmp_path, repo_slug="custom-org/custom-repo")
+        assert result is False
+
+
 def test_ensure_task_issue_skips_gh_for_non_github_repo(tmp_path: Path) -> None:
     """Business Rule: ensure_task_issue não deve invocar gh para repositórios fora do GitHub."""
     fake_git = tmp_path / ".git"

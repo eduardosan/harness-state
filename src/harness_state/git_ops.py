@@ -32,14 +32,19 @@ def get_current_branch(repo_dir: Path) -> str | None:
     return branch or None
 
 
-def is_github_repo(repo_dir: Path) -> bool:
+def is_github_repo(repo_dir: Path, repo_slug: str | None = None) -> bool:
     """Verifica se o repositório git local possui remote origin apontando para o GitHub.
+
+    Caso o repositório possua um remote configurado, verifica se a URL aponta para
+    o GitHub ('github.com'). Se o remote não estiver configurado (comum em testes unitários),
+    utiliza o `repo_slug` para inferir se é um repositório da organização (presença de '/').
 
     Args:
         repo_dir: Diretório raiz do repositório local.
+        repo_slug: Slug opcional do repositório (ex: 'eduardosan/harness-slack-bot').
 
     Returns:
-        True se o remote origin contiver 'github.com', False caso contrário.
+        True se for um repositório GitHub, False caso contrário.
     """
     if not (repo_dir / ".git").is_dir() and not (repo_dir / ".git").is_file():
         return False
@@ -50,9 +55,13 @@ def is_github_repo(repo_dir: Path) -> bool:
         text=True,
         check=False,
     )
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return False
-    return "github.com" in proc.stdout.strip().lower()
+    if proc.returncode == 0 and proc.stdout.strip():
+        return "github.com" in proc.stdout.strip().lower()
+
+    if repo_slug is not None:
+        return "/" in repo_slug
+
+    return True
 
 
 def ensure_working_branch(repo_dir: Path, branch_name: str) -> bool:
