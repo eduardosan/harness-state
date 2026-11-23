@@ -740,7 +740,7 @@ class HarnessOrchestrator:
                 continue
 
             dep_repo_dir = self.resolve_target_repo_dir(dep_task.repo)
-            if not is_github_repo(dep_repo_dir):
+            if not is_github_repo(dep_repo_dir, dep_task.repo):
                 continue
 
             expected_ver = dep_task.expected_version or get_repo_declared_version(
