@@ -61,3 +61,29 @@ jobs:
             -f "client_payload[version]=${TAG#v}" \
             -f "client_payload[conclusion]=success" \
             -f "client_payload[eval_sha]=${SHA}"
+
+  notify-slackbot:
+    name: "Disparar deploy no Slack Bot (core-released)"
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gerar token de instalação da GitHub App (dispatch cross-repo ao slackbot)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: eduardosan
+
+      - name: repository_dispatch core-released ao slackbot (dispara deploy atualizado)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api "repos/eduardosan/harness-slack-bot/dispatches" \
+            -X POST \
+            -f event_type=core-released \
+            -f "client_payload[version]=${TAG#v}" \
+            -f "client_payload[conclusion]=success" \
+            -f "client_payload[eval_sha]=${SHA}"

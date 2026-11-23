@@ -100,3 +100,15 @@ def test_harness_judge_verification_skill_mirror_identity() -> None:
     assert "Gate Integrity & Test Preservation" in catalog_text
     assert "No Error Masking" in catalog_text
     assert "Public Contract Preservation" in catalog_text
+
+
+def test_release_workflow_contains_notify_slackbot() -> None:
+    """Business Rule: release.yml deve despachar core-released para harness-slack-bot."""
+    repo_root = Path(__file__).resolve().parents[2]
+    workflow_path = repo_root / ".github" / "workflows" / "release.yml"
+
+    content = workflow_path.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(content)
+    assert isinstance(parsed, dict)
+    assert "notify-slackbot" in parsed.get("jobs", {})
+    assert "repos/eduardosan/harness-slack-bot/dispatches" in content
