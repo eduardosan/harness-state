@@ -32,13 +32,13 @@ def test_is_github_repo_returns_true_for_github_remote(tmp_path: Path) -> None:
 
 
 def test_is_github_repo_returns_false_for_internal_git_server(tmp_path: Path) -> None:
-    """Business Rule: is_github_repo deve retornar False para servidores Git internos como 192.168.0.200."""
+    """Business Rule: is_github_repo deve retornar False para servidores Git internos como git.internal.example.com."""
     fake_git = tmp_path / ".git"
     fake_git.mkdir()
 
     mock_proc = MagicMock()
     mock_proc.returncode = 0
-    mock_proc.stdout = "git+ssh://git@192.168.0.200/trab/ansible-hetzner-new.git/\n"
+    mock_proc.stdout = "git+ssh://git@git.internal.example.com/trab/ansible-hetzner-new.git/\n"
 
     with patch("subprocess.run", return_value=mock_proc):
         result = is_github_repo(tmp_path)
