@@ -32,6 +32,29 @@ def get_current_branch(repo_dir: Path) -> str | None:
     return branch or None
 
 
+def is_github_repo(repo_dir: Path) -> bool:
+    """Verifica se o repositório git local possui remote origin apontando para o GitHub.
+
+    Args:
+        repo_dir: Diretório raiz do repositório local.
+
+    Returns:
+        True se o remote origin contiver 'github.com', False caso contrário.
+    """
+    if not (repo_dir / ".git").is_dir() and not (repo_dir / ".git").is_file():
+        return False
+    proc = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    return "github.com" in proc.stdout.strip().lower()
+
+
 def ensure_working_branch(repo_dir: Path, branch_name: str) -> bool:
     """Garante que o repositório esteja na branch de trabalho especificada.
 
@@ -121,6 +144,9 @@ def get_active_pr_info(
     Returns:
         Tupla contendo `(pr_number, pr_url)` ou `(None, None)` se não houver PR.
     """
+    if not is_github_repo(repo_dir):
+        return None, None
+
     proc = subprocess.run(
         ["gh", "pr", "view", branch_name, "--json", "number,url"],
         cwd=repo_dir,
@@ -161,6 +187,9 @@ def ensure_pr_linked_to_issue(
     Returns:
         True se o PR já estava vinculado ou foi atualizado com sucesso.
     """
+    if not is_github_repo(repo_dir):
+        return False
+
     view_proc = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--json", "body", "-q", ".body"],
         cwd=repo_dir,
@@ -227,6 +256,13 @@ def publish_task_pr(
     if push_proc.returncode != 0:
         err = push_proc.stderr.strip()
         return None, None, f"Falha no push da branch {branch_name}: {err}"
+
+    if not is_github_repo(repo_dir):
+        msg = (
+            f"Branch {branch_name} enviada ao remote local "
+            f"({repo_dir.name} sem host GitHub)."
+        )
+        return None, None, msg
 
     target_issue = issue_number
     if target_issue is None:
@@ -430,6 +466,9 @@ def get_active_issue_info(
     Returns:
         Tupla contendo `(issue_number, issue_url)` ou `(None, None)` se não encontrada.
     """
+    if not is_github_repo(repo_dir):
+        return None, None
+
     proc = subprocess.run(
         ["gh", "issue", "list", "--state", "open", "--json", "number,title,url"],
         cwd=repo_dir,
@@ -449,12 +488,14 @@ def get_active_issue_info(
         if isinstance(items, list):
             target_tag = f"[{spec_id.upper()}]"
             for item in items:
-                if isinstance(item, dict):
-                    title = str(item.get("title", ""))
-                    if target_tag in title.upper():
-                        num = int(item.get("number", 0)) or None
-                        url = str(item.get("url", "")) or None
-                        return num, url
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", ""))
+                if target_tag not in title.upper():
+                    continue
+                num = int(item.get("number", 0)) or None
+                url = str(item.get("url", "")) or None
+                return num, url
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -535,6 +576,8 @@ def maybe_upgrade_existing_issue_body(
         sub_spec_content: Conteúdo completo da especificação do repositório.
         body_text: Novo corpo enriquecido da issue.
     """
+    if not is_github_repo(repo_dir):
+        return
     if not sub_spec_content or len(sub_spec_content.strip()) <= 20:
         return
     view_proc = subprocess.run(
@@ -678,6 +721,9 @@ def ensure_task_issue(
     Returns:
         Tupla contendo `(issue_number, issue_url)` ou `(None, None)` em falha.
     """
+    if not is_github_repo(repo_dir):
+        return None, None
+
     body_text = compose_task_issue_body(
         spec_id=spec_id,
         task_id=task_id,
