@@ -723,6 +723,10 @@ MAINTENANCE_POSITIVE_PHRASES = (
     "does not provide any code changes or modifications",
     "do not demonstrate any maintenance",
     "not relevant to the specification",
+    "refactors the",
+    "includes new tests",
+    "new tests that enforce",
+    "tests that enforce",
 )
 
 MAINTENANCE_NEGATIVE_REASONS = (
