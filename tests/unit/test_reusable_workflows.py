@@ -112,3 +112,60 @@ def test_release_workflow_contains_notify_slackbot() -> None:
     assert isinstance(parsed, dict)
     assert "notify-slackbot" in parsed.get("jobs", {})
     assert "repos/eduardosan/harness-slack-bot/dispatches" in content
+
+
+def test_bug_post_merge_template_uses_bot_app_id() -> None:
+    """Business Rule: O template bug-post-merge.yml no catálogo deve usar BOT_APP_ID e não referenciar paralax-ia."""
+    repo_root = Path(__file__).resolve().parents[2]
+    template_path = (
+        repo_root
+        / "src"
+        / "harness_state"
+        / "catalog"
+        / "pipeline"
+        / "common"
+        / "bug-post-merge.yml"
+    )
+    assert template_path.is_file(), (
+        "Template bug-post-merge.yml deve existir no catálogo de pipelines."
+    )
+
+    content = template_path.read_text(encoding="utf-8")
+    assert "paralax-ia" not in content, (
+        "Template bug-post-merge.yml não deve referenciar paralax-ia legada."
+    )
+    assert "FLYWHEEL_DISPATCH_TOKEN" not in content, (
+        "Template não deve depender de token estático legado."
+    )
+    assert "BOT_APP_ID" in content, "Template deve autenticar via BOT_APP_ID."
+    assert "actions/create-github-app-token" in content
+    assert "agentic-flywheel" in content
+
+    parsed = yaml.safe_load(content)
+    assert isinstance(parsed, dict)
+    assert "post-merge" in parsed.get("jobs", {})
+
+
+def test_installer_provisions_bug_post_merge_with_bot_app_id(
+    tmp_path: Path,
+) -> None:
+    """Business Rule: install_module_harness deve provisionar bug-post-merge.yml com autenticação BOT_APP_ID."""
+    from harness_state.installer import install_module_harness
+
+    spoke_dir = tmp_path / "mock-spoke"
+    spoke_dir.mkdir()
+    (spoke_dir / "pyproject.toml").write_text(
+        "[project]\nname = 'mock-spoke'\n", encoding="utf-8"
+    )
+
+    result = install_module_harness(spoke_dir, force=True)
+    installed_path = spoke_dir / ".github" / "workflows" / "bug-post-merge.yml"
+    assert installed_path.is_file(), (
+        "bug-post-merge.yml deve ser instalado em .github/workflows/"
+    )
+    assert ".github/workflows/bug-post-merge.yml" in result.installed_pipeline_files
+
+    installed_content = installed_path.read_text(encoding="utf-8")
+    assert "BOT_APP_ID" in installed_content
+    assert "paralax-ia" not in installed_content
+
