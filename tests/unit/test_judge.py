@@ -1140,6 +1140,20 @@ def test_is_maintenance_or_refactor_reason_handles_unrelated_release_diff() -> N
     assert is_maintenance_or_refactor_reason(reason) is True
 
 
+def test_is_maintenance_or_refactor_reason_handles_workflow_refactor_false_positive() -> None:
+    """Business Rule: Refatoração de workflow com novos testes e sem regressões é manutenção válida."""
+    from harness_state.judge import is_maintenance_or_refactor_reason
+
+    reason = (
+        "[Gate Rule 1: Test And Gate Integrity] The diff refactors the "
+        "bug-post-merge.yml file to use BOT_APP_ID and actions/create-github-app-token, "
+        "which is a direct violation of the guideline that states the file should not "
+        "reference paralax-ia or use FLYWHEEL_DISPATCH_TOKEN. The test_reusable_workflows.py "
+        "file also includes new tests that enforce these rules, further confirming the violation."
+    )
+    assert is_maintenance_or_refactor_reason(reason) is True
+
+
 def test_aggregate_functional_votes_usa_mediana_e_maioria() -> None:
     """Business Rule: a Etapa 1 decide por mediana de score e maioria de
     sucesso — um voto ruidoso de modelo pequeno não aprova nem reprova sozinho."""
