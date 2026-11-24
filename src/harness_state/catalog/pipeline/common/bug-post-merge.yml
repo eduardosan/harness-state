@@ -6,9 +6,53 @@ on:
 
 jobs:
   post-merge:
+    name: "Notificar Fechamento de Bug ao Flywheel"
     if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    uses: paralax-ia/actions-workflows/.github/workflows/bug-post-merge.yml@main
-    secrets:
-      FLYWHEEL_DISPATCH_TOKEN: ${{ secrets.FLYWHEEL_DISPATCH_TOKEN }}
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Identificar Issue Associada ao PR
+        id: extract-issue
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # Procura padrões 'fixes #N', 'closes #N', 'resolves #N' no corpo do PR
+          ISSUE_NUM=$(echo "$PR_BODY" | grep -ioE "(fixes|closes|resolves)[[:space:]]+#[0-9]+" | head -n 1 | grep -oE "[0-9]+" || true)
+          # Fallback: procura padrão issue-N no nome da branch
+          if [ -z "$ISSUE_NUM" ]; then
+            ISSUE_NUM=$(echo "$PR_BRANCH" | grep -oE "issue-[0-9]+" | head -n 1 | grep -oE "[0-9]+" || true)
+          fi
+          echo "issue_id=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar Token de Instalação da GitHub App (BOT_APP_ID)
+        if: steps.extract-issue.outputs.issue_id != ''
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: ${{ vars.SPEC_HUB_ORG || github.repository_owner }}
+
+      - name: Disparar evento bug-post-merge no Flywheel
+        if: steps.extract-issue.outputs.issue_id != '' && steps.app-token.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ISSUE_ID: ${{ steps.extract-issue.outputs.issue_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          SPOKE="${REPO##*/}"
+          HUB_ORG="${{ vars.SPEC_HUB_ORG || github.repository_owner }}"
+          echo "Disparando bug-post-merge para Issue #$ISSUE_ID (spoke: $SPOKE, pr: $PR_NUMBER)..."
+          gh api "repos/${HUB_ORG}/agentic-flywheel/dispatches" \
+            -X POST \
+            -f event_type=bug-post-merge \
+            -f "client_payload[issue_id]=${ISSUE_ID}" \
+            -f "client_payload[spoke]=${SPOKE}" \
+            -f "client_payload[pr_number]=${PR_NUMBER}" \
+            -f "client_payload[repo]=${REPO}"
